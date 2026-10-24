@@ -11,6 +11,9 @@ feature branch → PR into vishnuweb-a/mithraa.shi:main
                    └─ Vercel Production deployment
 ```
 
+Every PR also needs an initial and a final Ponytail review and the owner's merge authorization. See
+[DEVELOPMENT_REVIEW_POLICY.md](DEVELOPMENT_REVIEW_POLICY.md).
+
 GitHub Actions only **checks**. It never deploys and holds no secrets. Deployment is done only by
 the Vercel GitHub App installed on your account, so the only things that can deploy this repo are
 the Vercel projects connected to it. Check that list in GitHub *Settings → Integrations* (see
