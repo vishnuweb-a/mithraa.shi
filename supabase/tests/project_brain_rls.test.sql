@@ -141,14 +141,14 @@ select set_config('request.jwt.claims', '{"sub":"33333333-3333-3333-3333-3333333
 insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
   values (current_setting('test.pid')::uuid, 'prep', 'director', 'approve');
 select set_config('request.jwt.claims', '{"sub":"44444444-4444-4444-4444-444444444444","role":"authenticated"}', true);
-insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
-  values (current_setting('test.pid')::uuid, 'prep', 'hod', 'approve');
+insert into public.approval_decisions (project_id, stage_id, acting_role, department, decision)
+  values (current_setting('test.pid')::uuid, 'prep', 'hod', 'Costume', 'approve');
 select is((select status::text from public.project_stages where stage_id = 'prep'), 'active',
   'Gate 6 stays open while one HOD has not signed');
 
 select set_config('request.jwt.claims', '{"sub":"55555555-5555-5555-5555-555555555555","role":"authenticated"}', true);
-insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
-  values (current_setting('test.pid')::uuid, 'prep', 'hod', 'approve');
+insert into public.approval_decisions (project_id, stage_id, acting_role, department, decision)
+  values (current_setting('test.pid')::uuid, 'prep', 'hod', 'Camera', 'approve');
 select is((select status::text from public.project_stages where stage_id = 'prep'), 'passed', 'Gate 6 passes once every HOD signs');
 select is((select status::text from public.project_stages where stage_id = 'production'), 'active', 'Production becomes active');
 select is((select count(*)::int from public.approval_decisions where stage_id = 'prep'), 4, 'four individual Gate 6 signatures recorded');
