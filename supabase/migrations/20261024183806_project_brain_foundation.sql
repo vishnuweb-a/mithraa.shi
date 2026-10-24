@@ -181,7 +181,9 @@ create table public.gate_requirements (
 );
 comment on table public.gate_requirements is
   'Approval policy. A gate passes when every row is met: signers_required distinct people approving in one '
-  'of the roles, or (null) every member holding one of the roles, with at least one such member.';
+  'of the roles, or (null) every member holding one of the roles, with at least one such member. Rows are '
+  'independent, so one person holding several roles can meet several rows (solo filmmaker). Only '
+  'signers_required > 1 demands distinct people, and only within that row.';
 create index gate_requirements_gate_idx on public.gate_requirements (project_id, stage_id);
 
 create table public.gate_checklist_items (
@@ -197,7 +199,8 @@ create table public.gate_checklist_items (
   foreign key (project_id, stage_id) references public.project_stages (project_id, stage_id) on delete cascade
 );
 
--- Append-only: a changed mind is a new row; the latest row per (signer, role) counts.
+-- Append-only: a changed mind is a new row; the latest row per (signer, role) counts. The same signer
+-- may sign once per role they hold; repeating the latest decision in a role is rejected.
 create table public.approval_decisions (
   id bigint generated always as identity primary key,
   project_id uuid not null,
@@ -430,6 +433,13 @@ begin
   if not private.can_act_on_gate(new.project_id, new.stage_id, new.acting_role) then
     raise exception 'You do not hold role % for this gate', new.acting_role using errcode = '42501';
   end if;
+  -- One person may sign in several roles, but repeating the same decision in the same role is a duplicate.
+  if new.decision = (select d.decision from public.approval_decisions d
+                     where d.project_id = new.project_id and d.stage_id = new.stage_id
+                       and d.signer_id = new.signer_id and d.acting_role = new.acting_role
+                     order by d.id desc limit 1) then
+    raise exception 'You already recorded % as % on this gate', new.decision, new.acting_role using errcode = '23505';
+  end if;
   if exists (select 1 from public.gate_checklist_items i
              where i.project_id = new.project_id and i.stage_id = new.stage_id and not i.done) then
     raise exception 'Gate % checklist is incomplete', new.stage_id using errcode = 'P0001';
@@ -450,6 +460,10 @@ begin
   if new.decision = 'approve' and private.gate_satisfied(new.project_id, new.stage_id) then
     update public.project_stages set status = 'passed', passed_at = now()
     where project_id = new.project_id and stage_id = new.stage_id and status = 'active';
+    -- A multi-row insert (e.g. one person signing in all their roles) fires this once per row; pass once.
+    if not found then
+      return null;
+    end if;
 
     select s.id into v_next from public.stages s
     where s.position = (select position + 1 from public.stages where id = new.stage_id);

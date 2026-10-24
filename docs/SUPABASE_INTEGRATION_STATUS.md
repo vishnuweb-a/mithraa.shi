@@ -8,7 +8,8 @@
 | --- | --- | --- |
 | **Local stack** (`supabase start`, Postgres 17) | **Working.** Migration applied, tests pass | All Phase 1A development and testing |
 | **Remote project** (ref `yzdq…`, from `.mcp.json` and `.env`) | Reachable. Nothing marks it as dev or prod. Read-only probe: `public` exposes **no tables**, email sign-up on, anonymous sign-ins off | **Nothing.** No migration pushed and no writes |
-| Supabase MCP server (`.mcp.json`, HTTP) | Endpoint up (HTTP 401 without a token). **This session had no Supabase MCP tools loaded**, so MCP was not used | Needs OAuth in an interactive session (`/mcp`) |
+| Supabase MCP server (`.mcp.json`, HTTP, local config, not committed) | Authenticated later on 2026-10-25. Read-only calls only: no tables, no migrations, no branches | Read-only checks. Never `apply_migration` |
+| **CI** (`db-test` job in `.github/workflows/ci.yml`) | Starts a throwaway local stack in Docker on the runner and runs `supabase test db --local` | All pgTAP assertions on every PR. No link, no secrets, no remote access |
 
 Before anything reaches the remote project, the owner should confirm it is a **development**
 project. Ideally keep a separate production project and link with `supabase link`. Then run
@@ -49,7 +50,7 @@ supabase db advisors --local
 
 ## Blockers and gaps
 
-1. Supabase MCP needs authentication in an interactive Claude Code session.
-2. The remote project's role (dev or prod) is unconfirmed. Push nothing until it is.
-3. `model_pipeline.pdf` and `bussiness_model.pdf` are outside the repo (in the owner's Downloads folder). The gate rules on pp. 3–12 were checked against the default policy and match it, apart from the Gate 4 note in the architecture doc.
-4. CI does not run DB tests yet. That needs `supabase/setup-cli` and Docker in the workflow.
+1. The remote project's role (dev or prod) is unconfirmed. Push nothing until it is.
+2. `model_pipeline.pdf` and `bussiness_model.pdf` are outside the repo (in the owner's Downloads folder). The gate rules on pp. 3–12 were checked against the default policy and match it, apart from the Gate 4 note in the architecture doc.
+3. CI runs the DB tests with Supabase CLI 2.115.0, matching local. Bump both together.
+4. Before any screen writes decisions: HOD department per signature (R1) and the solo self-financed / self-distributed path (R2). See architecture doc §4a.

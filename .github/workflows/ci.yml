@@ -46,3 +46,18 @@ jobs:
           check /stages/bogus 404
           check /does-not-exist 404
           exit $fail
+
+  # pgTAP suite against a throwaway local Supabase stack in Docker. Never linked to a remote project.
+  db-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.115.0
+      - name: Start local Supabase (applies supabase/migrations)
+        run: supabase start -x realtime,storage-api,imgproxy,mailpit,studio,edge-runtime,logflare,vector,supavisor,postgres-meta
+      - run: supabase test db --local
+      - if: always()
+        run: supabase stop --no-backup

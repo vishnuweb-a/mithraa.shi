@@ -94,6 +94,31 @@ A gate passes when **every** `gate_requirements` row for it is met **and** every
   such member must exist, so an empty HOD list never passes Gate 6 by default.
 
 Only the latest decision per (signer, role) counts, and only while the signer still holds that role.
+Repeating your latest decision in the same role is rejected as a duplicate (`23505`); changing it
+(reject → approve) is a new row.
+
+#### Operating models: solo filmmaker and team
+
+Approvals are evaluated against **roles**, not against separate accounts. One person can run the
+whole film:
+
+- The producer (the project creator) can add themselves in any other role, e.g. writer, director,
+  investor, HOD, client. Non-producers cannot add or change roles, including their own.
+- Each requirement row is evaluated independently. One person holding producer, director and HOD
+  meets all three Gate 6 rows with three signatures, one per acting role. Each signature is its own
+  `approval_decisions` row and audit event with the real `signer_id`, `acting_role` and timestamp.
+- No default row demands distinct people. All defaults are `1` or "every holder", and a solo
+  owner is the only holder. A distinct-person rule exists only when a project sets
+  `signers_required > 1`, and it applies within that row only (e.g. "two different directors").
+  Nothing requires that the producer and director be different people.
+- A team splits the same roles across members. A member can still hold several roles when the
+  producer grants them.
+
+Gates 5 and 8 need an investor and a client/buyer member. Today a solo owner can add themselves in
+those roles, but that records investor or buyer acceptance that did not happen. Self-financed and
+self-distributed projects need their own path (§4a, R2).
+Both scenarios are tested end to end in `supabase/tests/gate_operating_models.test.sql`. The solo
+case runs all nine gates without fast-forwarding.
 The final approving signature passes the gate and opens the next stage in the same transaction.
 A row lock on the stage serialises concurrent signatures.
 
@@ -133,7 +158,7 @@ Implementation notes:
   and rejects anonymous sessions.
 - User metadata is used only for `display_name`, never for authorization.
 - `audit_events.actor_id` has no foreign key, so history survives user deletion. `approval_decisions.signer_id`
-  keeps one, so a user who has signed cannot be hard-deleted (see open question 7).
+  keeps one, so a user who has signed cannot be hard-deleted (see open question 9).
 
 ## 3. Deliberately deferred
 
@@ -153,12 +178,42 @@ Implementation notes:
 1. **Defaults vs contract.** The default policy above is read from gate rule text. Confirm it per gate.
 2. **Who edits the policy?** `gate_requirements` is read-only to clients. Should a producer change it, and should a change during an open gate reset existing signatures?
 3. **Gate 4 "all credit parties".** Credit parties are not a role. Model them as a role, a department, or a per-gate list of named people?
-4. **One person, two roles.** A producer who is also the director can currently satisfy both requirements with two decisions. Allow it, or require distinct people?
+4. **Resolved: one person, several roles.** Allowed by product decision (solo filmmaker). See *Operating models* above. Still open: a HOD row has a `department` but a decision does not, so one person who is HOD of two departments signs once as `hod` for both. Required to change: see §4a, R1.
 5. **Rejections.** A reject is recorded but does not block other signers. For "1 of {producer, writer}" a writer's reject is overridden by a producer approve. Should a reject veto?
 6. **Checklist changes after signing.** Unticking an item blocks the pass, but earlier approvals stay valid. Should they be invalidated?
 7. **"Every HOD" snapshot.** "Every" is evaluated live, so adding a HOD mid-gate adds a required signature. Should the signer list freeze when the gate opens?
 8. **Order, delegation, expiry.** Sequential signing, delegates and signature expiry are not modelled (blueprint §9 leaves them open).
 9. **User deletion.** Signers cannot be hard-deleted. Decide the retention and anonymisation policy.
+
+## 4a. Required before any screen writes decisions
+
+Owner requirements, not yet built. Neither needs a change to the Phase 1A migration. Both are
+additive follow-up migrations. The Phase 1A migration has never been applied to a persistent
+database, and no screen writes decisions yet.
+
+**R1. HOD approvals identify the department.** One person may be HOD of several departments and
+must sign for each one separately.
+
+- Add nullable `approval_decisions.department`. `before_decision` requires it when
+  `acting_role = 'hod'`, rejects it for other roles, and checks a matching `project_members` row.
+- Key "latest decision" and the duplicate check on (signer, role, department).
+- `gate_satisfied` "every holder" matches `m.department is not distinct from a.department`.
+- `signers_required` rows keep counting distinct people.
+- Tests: one person who is HOD of two departments must sign twice; each audit row names the department.
+
+**R2. Solo projects can be self-financed and self-distributed** without recording investor or buyer
+acceptance that did not happen.
+
+- A per-project declaration set by the producer and written to the audit log: financing
+  `external | self` and distribution `external | self`, both defaulting to `external`.
+- When `self`, the Gate 5 investor row and the Gate 8 client row are replaced by a producer row.
+  Third-party checklist items ("Investor agreements signed", "Deliverables accepted by buyer") are
+  replaced by producer attestations.
+- Product decisions needed first: the attestation wording; whether the declaration can change once
+  Gate 5 or Gate 8 is open (proposal: no, it locks when the gate opens); whether a project can later
+  switch to an external investor or buyer, and whether that reopens the gate.
+
+Out of scope for both: policy editing by producers (question 2), organisations, and any UI.
 
 ## 5. Migration structure and workflow
 
