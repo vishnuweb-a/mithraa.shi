@@ -42,7 +42,7 @@ agent code cannot sign, project-scoped RLS, append-only decisions and audit, one
 | `private.gate_satisfied` | Latest decision per (signer, role, department); HOD approvals must match a current HOD membership with that department |
 | `private.before_decision` | Checks the department against the signer's HOD memberships; duplicate check includes the department |
 | `private.after_decision` | `gate.decision` audit detail gains `department` |
-| `private.lock_open_gate` + trigger | After insert/delete on `project_members`, takes `FOR UPDATE` on the project's active stage |
+| `private.lock_open_gate` + trigger | After insert/delete on `project_members`, takes `FOR UPDATE` on the project's stage rows in stage order |
 | `lib/supabase/database.types.ts` | Regenerated: `department` on `approval_decisions` |
 
 Departments match exactly (`'Camera'` ≠ `'camera'`, `'Sound '` ≠ `'Sound'`). **Future UI requirement:**
@@ -60,8 +60,9 @@ Invariant: **Gate 6 never passes while a department required by its policy is un
 `hod/Sound` membership in one transaction while the last other HOD signs in another let the signature
 evaluate a roster without Sound, so Gate 6 passed and Sound was required but never signed.
 
-Fix: membership inserts and deletes take the same `FOR UPDATE` row lock on the project's active stage
-that `before_decision` takes. The two transactions now run one after the other:
+Fix: membership inserts and deletes take the same `FOR UPDATE` row lock on the project's stages that
+`before_decision` takes on the active one. All stages are locked, in stage order, so a gate that opens
+while the change waits is covered as well. The two transactions now run one after the other:
 
 - **Membership change first.** The signature waits, then sees the new roster: Gate 6 stays open
   until Sound signs. A removed signer's approval is rejected (`42501`) or no longer counts.
@@ -71,12 +72,14 @@ that `before_decision` takes. The two transactions now run one after the other:
 What did not change: the roster is still live, not frozen when the gate opens (open question 7 in
 the architecture doc stays the owner's decision). Solo filmmakers are unaffected. A solo owner adding
 memberships and signing in one transaction already holds the lock. Membership changes on one project
-now queue behind each other and behind in-flight signatures; they are rare, and each statement holds
-a single row lock, so no lock cycle is added. (Two *multi-statement* client transactions that each
+now queue behind each other and behind in-flight signatures; they are rare. Locks are taken in
+ascending stage order, the same order a signature uses (its stage, then the next), so no lock cycle
+is added. (Two *multi-statement* client transactions that each
 tick/add and then sign could still deadlock, as before. PostgREST runs one statement per request.)
 
-Two-session regression tests (cases 3 and 4) are in `supabase/tests/concurrency.sh`. Both fail when the
-trigger is dropped and pass with it.
+Regression tests are cases 3–5 in `supabase/tests/concurrency.sh`. Cases 3 and 4 (two sessions) fail
+when the trigger is dropped. Case 5 (three sessions: Gate 5 passes while a HOD is being added, then
+Gate 6 is signed) fails when the trigger locks only the active stage. All pass with the trigger as shipped.
 
 ## Tests
 
@@ -100,6 +103,6 @@ trigger is dropped and pass with it.
 | 36 | Service-role (agent) code cannot sign as a HOD |
 
 The existing suites now pass departments on their HOD decisions. Their assertion counts are
-unchanged (46 + 32). Total: **114 assertions**, plus 4 two-session race tests in `concurrency.sh`.
+unchanged (46 + 32). Total: **114 assertions**, plus 5 multi-session race tests in `concurrency.sh` (3 new).
 
 Tests 20 and 34 were mutation-checked: each fails when its guard is removed from the migration.

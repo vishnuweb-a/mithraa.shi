@@ -143,12 +143,15 @@ $$;
 -- A final signature holds FOR UPDATE on the active stage while it evaluates the roster. Membership changes
 -- take the same lock, so the signature either sees an added/removed HOD or runs before it (never a passed
 -- Gate 6 with a department that was assigned but unsigned). Passed gates are not re-evaluated.
+-- All stages, not just the active one: a gate that opens while this waits is covered too. Ascending
+-- position matches a signature's order (stage N, then N + 1), so the two cannot deadlock.
 create function private.lock_open_gate() returns trigger
 language plpgsql security definer set search_path = '' as $$
 begin
-  perform 1 from public.project_stages s
-  where s.project_id = coalesce(new.project_id, old.project_id) and s.status = 'active'
-  for update;
+  perform 1 from public.project_stages s join public.stages st on st.id = s.stage_id
+  where s.project_id = coalesce(new.project_id, old.project_id)
+  order by st.position
+  for update of s;
   return null;
 end;
 $$;

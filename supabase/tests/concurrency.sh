@@ -135,4 +135,39 @@ EOF
 wait
 check "a HOD department added during the final approval lands after the pass" "$seen" passed
 
+
+# 5. A HOD is added while the final Gate 5 signature is in flight, and the change stays open after Gate 6
+#    opens: the last Gate 6 signature meanwhile must wait for the new HOD and leave Gate 6 open.
+pid=$(gate6_project)
+q <<EOF
+update public.project_stages set status = 'locked', activated_at = null where project_id = '$pid' and stage_id = 'prep';
+update public.project_stages set status = 'active', activated_at = now(), passed_at = null where project_id = '$pid' and stage_id = 'finance';
+insert into public.project_members (project_id, user_id, role) values ('$pid', 'a0000000-0000-0000-0000-00000000000a', 'investor');
+$(as_user "$A")
+update public.gate_checklist_items set done = true where project_id = '$pid' and stage_id = 'finance';
+insert into public.approval_decisions (project_id, stage_id, acting_role, decision) values ('$pid', 'finance', 'producer', 'approve');
+commit;
+EOF
+{ q <<EOF
+$(as_user "$A")
+insert into public.approval_decisions (project_id, stage_id, acting_role, decision) values ('$pid', 'finance', 'investor', 'approve');
+select pg_sleep(2) \g /dev/null
+commit;
+EOF
+} & sleep 1
+{ q <<EOF
+$(add_hod "$pid")
+select pg_sleep(3) \g /dev/null
+commit;
+EOF
+} & sleep 2
+# Producer and director already signed Gate 6 in gate6_project; Camera is the last known signature.
+q <<EOF
+$(sign_camera "$pid")
+commit;
+EOF
+wait
+check "a HOD added while the previous gate passes still blocks the next gate" \
+  "$(q <<< "select status from public.project_stages where project_id = '$pid' and stage_id = 'prep'")" active
+
 exit $fail
