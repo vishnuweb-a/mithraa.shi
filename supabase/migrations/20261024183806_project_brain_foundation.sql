@@ -68,7 +68,7 @@ insert into private.default_gate_requirements (stage_id, roles, signers_required
   ('write',      '{director}', 1),
   ('write',      '{producer}', 1),
   ('protect',    '{writer}',   1),
-  ('protect',    '{producer}', 1),
+  ('protect',    '{producer}', 1),         -- prototype only; blueprint says "all credit parties sign" (open question)
   ('finance',    '{producer}', 1),
   ('finance',    '{investor}', null),      -- "The producer and investors sign"
   ('prep',       '{producer}', 1),

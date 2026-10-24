@@ -51,5 +51,5 @@ supabase db advisors --local
 
 1. Supabase MCP needs authentication in an interactive Claude Code session.
 2. The remote project's role (dev or prod) is unconfirmed. Push nothing until it is.
-3. `model_pipeline.pdf` and `bussiness_model.pdf` are not in the workspace. The blueprint was taken from their summaries in `docs/BUSSINESS_FLOW.md` and `docs/APPLICATION_FLOW.md`.
+3. `model_pipeline.pdf` and `bussiness_model.pdf` are outside the repo (in the owner's Downloads folder). The gate rules on pp. 3–12 were checked against the default policy and match it, apart from the Gate 4 note in the architecture doc.
 4. CI does not run DB tests yet. That needs `supabase/setup-cli` and Docker in the workflow.

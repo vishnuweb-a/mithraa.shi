@@ -104,7 +104,7 @@ Default policy copied by `create_project()` (from the blueprint gate rules):
 | 1 Idea Greenlight | 1 of {producer, writer} ("creator or producer") |
 | 2 Story Approval | writer + director + producer |
 | 3 Script Lock | director + producer |
-| 4 Protection Complete | writer + producer (see open question 3) |
+| 4 Protection Complete | writer + producer. The producer comes from the prototype; the blueprint says "all credit parties sign" (open question 3) |
 | 5 Financing Close | producer + **every** investor |
 | 6 Shoot Ready | producer + director + **every** HOD |
 | 7 Picture Wrap | director |
