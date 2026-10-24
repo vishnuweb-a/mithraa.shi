@@ -20,7 +20,7 @@ the database, any remote deployment.
 | `supabase/migrations/20261024183806_project_brain_foundation.sql` | Schema, RLS, triggers, grants |
 | `supabase/tests/project_brain_rls.test.sql` | 46 pgTAP allow/deny assertions |
 | `supabase/tests/gate_operating_models.test.sql` | 32 assertions: solo filmmaker through all nine gates, collaborative Gate 6 |
-| `.github/workflows/ci.yml` | New `db-test` job: pgTAP suite on a throwaway local Supabase stack |
+| `.github/workflows/ci.yml` | New `db-test` job: pgTAP suite and two-session race tests (`supabase/tests/concurrency.sh`) on a throwaway local Supabase stack |
 | `lib/supabase/client.ts`, `server.ts`, `database.types.ts` | Browser/server clients and generated types |
 | `package.json`, `package-lock.json` | `@supabase/supabase-js@2.117.3` and `@supabase/ssr@0.12.7` (exact); `db:test` and `db:types` scripts |
 | `.env.example` | New variable names (placeholders only) |
@@ -32,6 +32,7 @@ the database, any remote deployment.
 | --- | --- | --- |
 | Migration applies to a clean DB (`supabase db reset --local`) | **PASS** | Postgres 17 |
 | pgTAP RLS/policy tests (`supabase test db`) | **PASS** 78/78 | 2 files |
+| Two-session race tests (`supabase/tests/concurrency.sh`) | **PASS** 2/2 | producer-removal race, checklist-vs-final-approval race |
 | Tests can fail (guard trigger dropped) | **PASS** | 4 assertions fail as expected, restored by reset |
 | Tests can fail (duplicate and single-pass fixes removed) | **PASS** | 7 of 32 operating-model assertions fail, restored by reset |
 | End-to-end over HTTP (GoTrue sign-up + PostgREST via supabase-js) | **PASS** 9/9 | anon refused, isolation, no self-assignment, signer forgery refused, Gate 1 pass, audit immutable |
@@ -86,8 +87,8 @@ every role. It is not the intended flow for a self-financed or self-distributed 
 - `docs/product-architecture-readme` has **no commits** beyond the onboarding commit. Its work
   (`README.md` edit, `docs/APPLICATION_FLOW.md`, `docs/BUSSINESS_FLOW.md`,
   `docs/PRODUCT_ARCHITECTURE_ANALYSIS.md`) is uncommitted in the working tree. It is **excluded
-  from this branch's commit** and left untouched. Links to those docs from this PR resolve once
-  that docs PR lands.
+  from this branch's commit** and left untouched. This PR names those docs in plain text and does
+  not link to them, so no link is broken before that docs PR lands.
 - `.agents/`, `.mcp.json` and `skills-lock.json` (local tooling config) are also not committed.
 - `docs/SUPABASE_MCP_VERIFICATION_REPORT.md` is not committed. It records the remote project ref and
   local MCP setup. The PDFs in the repo root are the owner's source documents and are not committed.

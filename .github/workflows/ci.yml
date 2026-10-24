@@ -59,5 +59,7 @@ jobs:
       - name: Start local Supabase (applies supabase/migrations)
         run: supabase start -x realtime,storage-api,imgproxy,mailpit,studio,edge-runtime,logflare,vector,supavisor,postgres-meta
       - run: supabase test db --local
+      - name: Two-session race tests
+        run: bash supabase/tests/concurrency.sh
       - if: always()
         run: supabase stop --no-backup

@@ -52,7 +52,7 @@ insert into public.stages (id, position, name, gate_name) values
   ('release',    9, 'Release & Monetise', 'Release');
 
 -- Default gate policy copied into each new project. Derived from the blueprint's gate rules
--- (docs/BUSSINESS_FLOW.md §5) and lib/data.ts; each row must be met. signers_required null = every member holding
+-- (owner's blueprint notes, §5 gate rules) and lib/data.ts; each row must be met. signers_required null = every member holding
 -- one of the roles (and at least one such member must exist).
 create table private.default_gate_requirements (
   stage_id text not null references public.stages (id),
@@ -370,11 +370,15 @@ language plpgsql security definer set search_path = '' as $$
 declare
   r public.project_members := coalesce(new, old);
 begin
-  if tg_op = 'DELETE' and r.role = 'producer' and not exists (
-    select 1 from public.project_members m
-    where m.project_id = r.project_id and m.role = 'producer' and m.id <> r.id
-  ) and exists (select 1 from public.projects p where p.id = r.project_id) then
-    raise exception 'A project must keep at least one producer' using errcode = '42501';
+  if tg_op = 'DELETE' and r.role = 'producer' then
+    -- Lock the project so two producers removing each other at once cannot both pass the check.
+    perform 1 from public.projects p where p.id = r.project_id for no key update;
+    if found and not exists (
+      select 1 from public.project_members m
+      where m.project_id = r.project_id and m.role = 'producer' and m.id <> r.id
+    ) then
+      raise exception 'A project must keep at least one producer' using errcode = '42501';
+    end if;
   end if;
 
   insert into public.audit_events (project_id, actor_kind, actor_id, action, target_table, target_id, detail)
@@ -396,8 +400,11 @@ begin
      (old.project_id, old.stage_id, old.position, old.label) then
     raise exception 'Only the done flag of a checklist item can change' using errcode = '42501';
   end if;
-  if not exists (select 1 from public.project_stages s
-                 where s.project_id = new.project_id and s.stage_id = new.stage_id and s.status = 'active') then
+  -- FOR SHARE waits for an in-flight final approval (which holds FOR UPDATE), so an untick cannot land on a passed gate.
+  perform 1 from public.project_stages s
+  where s.project_id = new.project_id and s.stage_id = new.stage_id and s.status = 'active'
+  for share;
+  if not found then
     raise exception 'Gate % is not open', new.stage_id using errcode = 'P0001';
   end if;
   if new.done is distinct from old.done then

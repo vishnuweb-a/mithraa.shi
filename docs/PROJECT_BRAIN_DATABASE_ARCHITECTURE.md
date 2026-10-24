@@ -5,8 +5,9 @@ Tests: [`supabase/tests/project_brain_rls.test.sql`](../supabase/tests/project_b
 Postgres 17 (Supabase local stack).*
 
 This is the first real storage for the Project Brain: one shared, permissioned record per film.
-The requirements come from the blueprint as captured in [BUSSINESS_FLOW.md](BUSSINESS_FLOW.md) and
-[APPLICATION_FLOW.md](APPLICATION_FLOW.md). Phase 1A covers **identity, project isolation, stages,
+The requirements come from the blueprint as captured in the owner's business-flow and application-flow
+notes (`BUSSINESS_FLOW.md`, `APPLICATION_FLOW.md`). Those notes are not part of this PR; they land in a
+separate docs PR. Phase 1A covers **identity, project isolation, stages,
 multi-signer gates and audit**. It does not cover agents, guardians, vectors or a knowledge graph.
 
 ## 1. Entity relationship model
