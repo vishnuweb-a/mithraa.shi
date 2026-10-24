@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run build
+      - name: Route smoke test
+        run: |
+          npx next start -p 3000 &
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3000/ && break; sleep 1; done
+          fail=0
+          check() {
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000$1")
+            echo "$code $1 (want $2)"
+            [ "$code" = "$2" ] || fail=1
+          }
+          for p in / /desk /agents /pipeline /guardians /brain /roles \
+                   /stages/ideate /stages/develop /stages/write /stages/protect /stages/finance \
+                   /stages/prep /stages/production /stages/post /stages/release; do
+            check "$p" 200
+          done
+          check /stages/bogus 404
+          check /does-not-exist 404
+          exit $fail

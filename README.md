@@ -7,6 +7,9 @@ Project Brain — with a person approving every stage gate.
 Sample project: **Kolam** (Tamil feature · Hindi dub · English subs), currently in
 Stage 6 · Pre-production. All numbers are illustrative.
 
+> **Prototype.** Every agent, AI answer and permission is simulated in the browser. There is no
+> backend, database, AI model or login. Maintainer docs are in [`docs/`](docs/).
+
 ```bash
 npm install
 npm run dev   # http://localhost:3000

@@ -3,6 +3,9 @@ import { notFound } from "next/navigation";
 import { StageView } from "@/components/stages/StageView";
 import { STAGES, stageById } from "@/lib/data";
 
+// Unlisted stage ids would otherwise get the PPR fallback shell (HTTP 200) before notFound() runs.
+export const ensureStatic = "navigation";
+
 export function generateStaticParams() {
   return STAGES.map((s) => ({ stage: s.id }));
 }
