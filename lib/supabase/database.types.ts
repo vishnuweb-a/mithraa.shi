@@ -14,6 +14,7 @@ export type Database = {
           acting_role: Database["public"]["Enums"]["project_role"]
           created_at: string
           decision: Database["public"]["Enums"]["gate_decision"]
+          department: string | null
           id: number
           note: string | null
           project_id: string
@@ -24,6 +25,7 @@ export type Database = {
           acting_role: Database["public"]["Enums"]["project_role"]
           created_at?: string
           decision: Database["public"]["Enums"]["gate_decision"]
+          department?: string | null
           id?: never
           note?: string | null
           project_id: string
@@ -34,6 +36,7 @@ export type Database = {
           acting_role?: Database["public"]["Enums"]["project_role"]
           created_at?: string
           decision?: Database["public"]["Enums"]["gate_decision"]
+          department?: string | null
           id?: never
           note?: string | null
           project_id?: string

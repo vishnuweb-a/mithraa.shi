@@ -1,7 +1,8 @@
 # Project Brain — Database Architecture (Phase 1A)
 
-*Migration: [`supabase/migrations/20261024183806_project_brain_foundation.sql`](../supabase/migrations/20261024183806_project_brain_foundation.sql) ·
-Tests: [`supabase/tests/project_brain_rls.test.sql`](../supabase/tests/project_brain_rls.test.sql) ·
+*Migrations: [`20261024183806_project_brain_foundation.sql`](../supabase/migrations/20261024183806_project_brain_foundation.sql),
+[`20261025010000_hod_department_approvals.sql`](../supabase/migrations/20261025010000_hod_department_approvals.sql) (Phase 1A.1, see [HOD_DEPARTMENT_APPROVALS.md](HOD_DEPARTMENT_APPROVALS.md)) ·
+Tests: [`supabase/tests/`](../supabase/tests/) ·
 Postgres 17 (Supabase local stack).*
 
 This is the first real storage for the Project Brain: one shared, permissioned record per film.
@@ -56,6 +57,7 @@ erDiagram
   APPROVAL_DECISIONS { bigint id PK
     uuid signer_id FK
     project_role acting_role
+    text department "HOD only"
     gate_decision decision
     text note }
   BRAIN_RECORDS { uuid id PK
@@ -77,11 +79,11 @@ erDiagram
 | `stages` | The nine stages (reference data) | — |
 | `profiles` | Display name per auth user, created by a sign-up trigger | `display_name` (own row) |
 | `projects` | One film | `title`, `code`, `logline` (producers). Created only through `create_project()` |
-| `project_members` | Project-scoped roles (`RoleId` from `lib/data.ts`). A person can hold several roles; `department` separates HODs | insert/delete (producers only) |
+| `project_members` | Project-scoped roles (`RoleId` from `lib/data.ts`). A person can hold several roles; `department` separates HODs and is required on HOD rows | insert/delete (producers only) |
 | `project_stages` | `locked` → `active` → `passed` per project; one active stage at most (partial unique index) | — (triggers only) |
 | `gate_requirements` | Configurable approval policy per gate | — |
 | `gate_checklist_items` | Gate checklist; tick attributed by trigger | `done` (gate roles, active stage) |
-| `approval_decisions` | Individual signatures, append-only | `project_id, stage_id, acting_role, decision, note` |
+| `approval_decisions` | Individual signatures, append-only. HOD signatures name their department | `project_id, stage_id, acting_role, department, decision, note` |
 | `brain_records` | Project memory items (Idea Card, Story Bible, note…) with provenance | `project_id, stage_id, kind, title, body` |
 | `audit_events` | Append-only, trigger-written trail | — |
 | `private.default_gate_*` | Templates copied into each new project | — (not exposed) |
@@ -94,9 +96,15 @@ A gate passes when **every** `gate_requirements` row for it is met **and** every
 - `signers_required = null`: **every** current member holding one of `roles` approves. At least one
   such member must exist, so an empty HOD list never passes Gate 6 by default.
 
-Only the latest decision per (signer, role) counts, and only while the signer still holds that role.
-Repeating your latest decision in the same role is rejected as a duplicate (`23505`); changing it
-(reject → approve) is a new row.
+Only the latest decision per (signer, role, department) counts, and only while the signer still holds
+that role (and, for a HOD, that department). Repeating your latest decision in the same role and
+department is rejected as a duplicate (`23505`); changing it (reject → approve) is a new row.
+
+**HOD departments.** A HOD decision must name a department (`23514` if missing) that matches one of
+the signer's own HOD memberships on that project (`42501` otherwise). Other roles cannot name one
+(`23514`); their membership `department` stays free-form metadata and plays no part in approvals.
+"Every HOD" means every (HOD, department) membership, so a person who is HOD of Camera and Sound
+signs twice. Numeric rules such as "two HODs" still count distinct people, not departments.
 
 #### Operating models: solo filmmaker and team
 
@@ -107,7 +115,8 @@ whole film:
   investor, HOD, client. Non-producers cannot add or change roles, including their own.
 - Each requirement row is evaluated independently. One person holding producer, director and HOD
   meets all three Gate 6 rows with three signatures, one per acting role. Each signature is its own
-  `approval_decisions` row and audit event with the real `signer_id`, `acting_role` and timestamp.
+  `approval_decisions` row and audit event with the real `signer_id`, `acting_role`, `department`
+  (HOD only) and timestamp. A person who is HOD of several departments signs once per department.
 - No default row demands distinct people. All defaults are `1` or "every holder", and a solo
   owner is the only holder. A distinct-person rule exists only when a project sets
   `signers_required > 1`, and it applies within that row only (e.g. "two different directors").
@@ -119,9 +128,11 @@ Gates 5 and 8 need an investor and a client/buyer member. Today a solo owner can
 those roles, but that records investor or buyer acceptance that did not happen. Self-financed and
 self-distributed projects need their own path (§4a, R2).
 Both scenarios are tested end to end in `supabase/tests/gate_operating_models.test.sql`. The solo
-case runs all nine gates without fast-forwarding.
+case runs all nine gates without fast-forwarding. Department sign-offs for both models are tested in
+`supabase/tests/hod_department_approvals.test.sql`.
 The final approving signature passes the gate and opens the next stage in the same transaction.
-A row lock on the stage serialises concurrent signatures.
+A row lock on the stage serialises concurrent signatures, and membership changes take the same lock,
+so a signature always evaluates "every holder" against a committed roster.
 
 Default policy copied by `create_project()` (from the blueprint gate rules):
 
@@ -132,7 +143,7 @@ Default policy copied by `create_project()` (from the blueprint gate rules):
 | 3 Script Lock | director + producer |
 | 4 Protection Complete | writer + producer. The producer comes from the prototype; the blueprint says "all credit parties sign" (open question 3) |
 | 5 Financing Close | producer + **every** investor |
-| 6 Shoot Ready | producer + director + **every** HOD |
+| 6 Shoot Ready | producer + director + **every** HOD, once per department |
 | 7 Picture Wrap | director |
 | 8 Final Delivery | director + client/buyer |
 | 9 Release | producer |
@@ -147,6 +158,7 @@ Default policy copied by `create_project()` (from the blueprint gate rules):
 | Decisions are attributable | `signer_id` has no client grant and is overwritten with `auth.uid()` by a trigger | pgTAP 19, 27, 44, e2e 7 |
 | Agents cannot approve | Decision triggers reject any insert without `auth.uid()`. Triggers run even for `service_role`, which bypasses RLS | pgTAP 38 |
 | Signers need the role | RLS and the trigger both check that the signer holds `acting_role` and that the role appears in the gate policy | pgTAP 29, 39 |
+| HODs sign only their own departments | `before_decision` requires a matching HOD membership on the same project; a check constraint keeps `department` HOD-only | `hod_department_approvals` 2–6, 23–26 |
 | Audit cannot be forged or edited | No client grants; `forbid_change` trigger blocks UPDATE/DELETE for every role; TRUNCATE revoked from `service_role` | pgTAP 21–22, 35–37, e2e 9 |
 | Agent drafts stay labelled | Clients cannot set `origin`/`agent_key`; agent rows need `agent_key` | pgTAP 24 |
 | Privileged keys stay off the browser | App uses only `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`; no code reads secret keys | bundle scan |
@@ -179,7 +191,7 @@ Implementation notes:
 1. **Defaults vs contract.** The default policy above is read from gate rule text. Confirm it per gate.
 2. **Who edits the policy?** `gate_requirements` is read-only to clients. Should a producer change it, and should a change during an open gate reset existing signatures?
 3. **Gate 4 "all credit parties".** Credit parties are not a role. Model them as a role, a department, or a per-gate list of named people?
-4. **Resolved: one person, several roles.** Allowed by product decision (solo filmmaker). See *Operating models* above. Still open: a HOD row has a `department` but a decision does not, so one person who is HOD of two departments signs once as `hod` for both. Required to change: see §4a, R1.
+4. **Resolved: one person, several roles.** Allowed by product decision (solo filmmaker). See *Operating models* above. HOD sign-offs are per department since Phase 1A.1 (§4a, R1).
 5. **Rejections.** A reject is recorded but does not block other signers. For "1 of {producer, writer}" a writer's reject is overridden by a producer approve. Should a reject veto?
 6. **Checklist changes after signing.** Unticking an item blocks the pass, but earlier approvals stay valid. Should they be invalidated?
 7. **"Every HOD" snapshot.** "Every" is evaluated live, so adding a HOD mid-gate adds a required signature. Should the signer list freeze when the gate opens?
@@ -188,21 +200,17 @@ Implementation notes:
 
 ## 4a. Required before any screen writes decisions
 
-Owner requirements, not yet built. Neither needs a change to the Phase 1A migration. Both are
-additive follow-up migrations. The Phase 1A migration has never been applied to a persistent
-database, and no screen writes decisions yet.
+Owner requirements, built as additive follow-up migrations. Neither changes the Phase 1A migration.
+No migration has been applied to a persistent database, and no screen writes decisions yet.
 
-**R1. HOD approvals identify the department.** One person may be HOD of several departments and
-must sign for each one separately.
+**R1. HOD approvals identify the department. Implemented** (Phase 1A.1,
+`20261025010000_hod_department_approvals.sql`, details in [HOD_DEPARTMENT_APPROVALS.md](HOD_DEPARTMENT_APPROVALS.md)).
+One person may be HOD of several departments and signs for each one separately. One change from
+the original plan: `gate_satisfied` compares departments for HOD rows only, not
+`m.department is not distinct from a.department`. Otherwise a non-HOD member with department
+metadata could never meet an "every holder" row.
 
-- Add nullable `approval_decisions.department`. `before_decision` requires it when
-  `acting_role = 'hod'`, rejects it for other roles, and checks a matching `project_members` row.
-- Key "latest decision" and the duplicate check on (signer, role, department).
-- `gate_satisfied` "every holder" matches `m.department is not distinct from a.department`.
-- `signers_required` rows keep counting distinct people.
-- Tests: one person who is HOD of two departments must sign twice; each audit row names the department.
-
-**R2. Solo projects can be self-financed and self-distributed** without recording investor or buyer
+**R2. Pending.** Solo projects can be self-financed and self-distributed without recording investor or buyer
 acceptance that did not happen.
 
 - A per-project declaration set by the producer and written to the audit log: financing

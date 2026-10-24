@@ -76,12 +76,12 @@ select is((select status::text from public.project_stages where project_id = cur
 select throws_ok($$insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
   values (current_setting('test.solo')::uuid, 'prep', 'producer', 'approve')$$, '23505', null,
   'solo: a second producer approval on the same gate is a duplicate');
-select throws_ok($$insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
-  values (current_setting('test.solo')::uuid, 'prep', 'hod', 'approve'),
-         (current_setting('test.solo')::uuid, 'prep', 'hod', 'approve')$$, '23505', null,
+select throws_ok($$insert into public.approval_decisions (project_id, stage_id, acting_role, department, decision)
+  values (current_setting('test.solo')::uuid, 'prep', 'hod', 'All departments', 'approve'),
+         (current_setting('test.solo')::uuid, 'prep', 'hod', 'All departments', 'approve')$$, '23505', null,
   'solo: the same role twice in one statement is a duplicate');
-select lives_ok($$insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
-  values (current_setting('test.solo')::uuid, 'prep', 'hod', 'approve')$$, 'solo: signs Gate 6 as HOD');
+select lives_ok($$insert into public.approval_decisions (project_id, stage_id, acting_role, department, decision)
+  values (current_setting('test.solo')::uuid, 'prep', 'hod', 'All departments', 'approve')$$, 'solo: signs Gate 6 as HOD');
 select is((select status::text from public.project_stages where project_id = current_setting('test.solo')::uuid and stage_id = 'prep'),
   'passed', 'solo: Gate 6 passes as producer, director and HOD');
 
@@ -141,9 +141,9 @@ set local role authenticated;
 
 select set_config('request.jwt.claims', '{"sub":"b1111111-1111-1111-1111-111111111111","role":"authenticated"}', true);
 update public.gate_checklist_items set done = true where project_id = current_setting('test.team')::uuid and stage_id = 'prep';
-select lives_ok($$insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
-  values (current_setting('test.team')::uuid, 'prep', 'producer', 'approve'),
-         (current_setting('test.team')::uuid, 'prep', 'hod', 'approve')$$, 'team: owner signs as producer and as Sound HOD');
+select lives_ok($$insert into public.approval_decisions (project_id, stage_id, acting_role, department, decision)
+  values (current_setting('test.team')::uuid, 'prep', 'producer', null, 'approve'),
+         (current_setting('test.team')::uuid, 'prep', 'hod', 'Sound', 'approve')$$, 'team: owner signs as producer and as Sound HOD');
 
 select set_config('request.jwt.claims', '{"sub":"b4444444-4444-4444-4444-444444444444","role":"authenticated"}', true);
 select throws_ok($$insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
@@ -160,8 +160,8 @@ select is((select status::text from public.project_stages where project_id = cur
 select set_config('request.jwt.claims', '{"sub":"b3333333-3333-3333-3333-333333333333","role":"authenticated"}', true);
 select throws_ok($$insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
   values (current_setting('test.team')::uuid, 'prep', 'producer', 'approve')$$, '42501', null, 'team: HOD cannot sign as producer');
-insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
-  values (current_setting('test.team')::uuid, 'prep', 'hod', 'approve');
+insert into public.approval_decisions (project_id, stage_id, acting_role, department, decision)
+  values (current_setting('test.team')::uuid, 'prep', 'hod', 'Costume', 'approve');
 select is((select status::text from public.project_stages where project_id = current_setting('test.team')::uuid and stage_id = 'prep'),
   'passed', 'team: Gate 6 passes once every configured requirement is met');
 select results_eq($$select signer_id, acting_role::text from public.approval_decisions
