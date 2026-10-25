@@ -27,39 +27,69 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm run test:unit
       - run: npm run build
+      # No Supabase env here, so nobody can sign in: every workspace route must send visitors to /login.
+      # Signed-in behaviour (incl. the 404 for /stages/bogus) is covered by the e2e suite in db-test.
       - name: Route smoke test
         run: |
           npx next start -p 3000 &
-          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3000/ && break; sleep 1; done
+          for i in $(seq 1 30); do curl -sf -o /dev/null http://localhost:3000/login && break; sleep 1; done
           fail=0
           check() {
-            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:3000$1")
-            echo "$code $1 (want $2)"
-            [ "$code" = "$2" ] || fail=1
+            got=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' "http://localhost:3000$1")
+            echo "$got $1 (want $2)"
+            [ "$got" = "$2" ] || fail=1
           }
-          for p in / /desk /agents /pipeline /guardians /brain /roles \
+          check / "307 http://localhost:3000/login"
+          for p in /desk /agents /pipeline /guardians /brain /roles \
                    /stages/ideate /stages/develop /stages/write /stages/protect /stages/finance \
-                   /stages/prep /stages/production /stages/post /stages/release; do
-            check "$p" 200
+                   /stages/prep /stages/production /stages/post /stages/release /stages/bogus /does-not-exist; do
+            check "$p" "307 http://localhost:3000/login?next=${p//\//%2F}"
           done
-          check /stages/bogus 404
-          check /does-not-exist 404
+          for p in /login /signup /forgot-password /reset-password; do
+            check "$p" "200 "
+          done
+          check /auth/callback "307 http://localhost:3000/login?error=link"
           exit $fail
 
-  # pgTAP suite against a throwaway local Supabase stack in Docker. Never linked to a remote project.
+  # pgTAP suite and the auth end-to-end tests against a throwaway local Supabase stack in Docker.
+  # Never linked to a remote project. Google keys are dummies: tests stop at the hand-off to Google.
   db-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    env:
+      NEXT_TELEMETRY_DISABLED: 1
+      SUPABASE_AUTH_EXTERNAL_GOOGLE_CLIENT_ID: ci-dummy.apps.googleusercontent.com
+      SUPABASE_AUTH_EXTERNAL_GOOGLE_SECRET: ci-dummy-secret
     steps:
       - uses: actions/checkout@v5
       - uses: supabase/setup-cli@v1
         with:
           version: 2.115.0
       - name: Start local Supabase (applies supabase/migrations)
-        run: supabase start -x realtime,storage-api,imgproxy,mailpit,studio,edge-runtime,logflare,vector,supavisor,postgres-meta
+        run: supabase start -x realtime,storage-api,imgproxy,studio,edge-runtime,logflare,vector,supavisor,postgres-meta
       - run: supabase test db --local
       - name: Two-session race tests
         run: bash supabase/tests/concurrency.sh
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Point the app and tests at the local stack
+        run: |
+          eval "$(supabase status -o env)"
+          {
+            echo "API_URL=$API_URL"
+            echo "SERVICE_ROLE_KEY=$SERVICE_ROLE_KEY"
+            echo "MAILPIT_URL=$MAILPIT_URL"
+            echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
+            echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$PUBLISHABLE_KEY"
+          } >> "$GITHUB_ENV"
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Auth end-to-end tests
+        run: npm run test:e2e
       - if: always()
         run: supabase stop --no-backup

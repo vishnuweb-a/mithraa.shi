@@ -6,6 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useBrain } from "@/components/brain/BrainProvider";
 import { APPROVALS, FLAGS, PROJECT, ROLES, STAGES, roleById, type RoleId } from "@/lib/data";
 import { Avatar } from "@/components/ui";
+import { signOut } from "@/app/(auth)/actions";
+import { KolamMark } from "@/components/shell/KolamMark";
 
 const ICON: Record<string, string> = {
   home: "M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z",
@@ -37,7 +39,7 @@ const PROJECTS = [
   { title: "Radio Thatha", sub: "Ideate", href: "/stages/ideate" },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({ user }: { user: { name: string; email: string } }) {
   const { role, setRole, stageState, activeStage, reset } = useBrain();
   const [open, setOpen] = useState(false);
   const path = usePathname();
@@ -66,10 +68,25 @@ export function AppSidebar() {
     { k: "team", href: "/roles", label: "Team" },
   ];
 
+  const account = (
+    <div className="flex min-w-0 items-center gap-2 px-1">
+      <Avatar name={user.name} size={28} />
+      <span className="flex min-w-0 flex-1 flex-col leading-tight">
+        <span className="truncate text-[13px] font-medium" data-testid="account-name">{user.name}</span>
+        {user.name !== user.email && <span className="truncate text-[11.5px] muted">{user.email}</span>}
+      </span>
+      <form action={signOut}>
+        <button type="submit" className="rounded-lg px-2 py-1 text-[12px] text-[var(--ink-2)] hover:bg-white/[0.06] hover:text-white">
+          Sign out
+        </button>
+      </form>
+    </div>
+  );
+
   const roleSelect = (
     <label className="flex min-w-0 items-center gap-2 rounded-xl bg-[var(--sheet)] p-1.5 pr-2">
       <Avatar name={r.person} size={28} />
-      <span className="sr-only">View as</span>
+      <span className="sr-only">Preview the sample project as</span>
       <select value={role} onChange={(e) => setRole(e.target.value as RoleId)} className="min-w-0 flex-1 cursor-pointer truncate bg-transparent text-[13px] font-medium text-[var(--ink)] outline-none">
         {ROLES.map((x) => (
           <option key={x.id} value={x.id} className="bg-[#1c1e20]">
@@ -145,6 +162,7 @@ export function AppSidebar() {
               </span>
             </Link>
           )}
+          {account}
           {roleSelect}
           <button onClick={reset} className="px-2 py-1 text-left text-[12px] text-[var(--faint)] hover:text-[var(--ink-2)]">
             Reset sample data
@@ -173,20 +191,12 @@ export function AppSidebar() {
             );
           })}
         </nav>
+        {account}
         {roleSelect}
       </header>
 
       {open && <AskShi onClose={() => setOpen(false)} />}
     </>
-  );
-}
-
-export function KolamMark({ size = 26, dark }: { size?: number; dark?: boolean }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 40 40" aria-hidden>
-      {[12, 20, 28].map((x) => [12, 20, 28].map((y) => <circle key={`${x}${y}`} cx={x} cy={y} r="1.6" fill={dark ? "#0f1113" : "#fff"} opacity=".7" />))}
-      <path d="M20 5c7 0 7 10 0 10s-7-10 0-10Zm0 20c7 0 7 10 0 10s-7-10 0-10ZM5 20c0-7 10-7 10 0s-10 7-10 0Zm20 0c0-7 10-7 10 0s-10 7-10 0Z" fill="none" stroke={dark ? "#0f1113" : "var(--brand)"} strokeWidth="2.4" />
-    </svg>
   );
 }
 

@@ -92,7 +92,8 @@ function now() {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-export function BrainProvider({ children }: { children: ReactNode }) {
+export function BrainProvider({ children, userId }: { children: ReactNode; userId: string }) {
+  const key = `${KEY}:${userId}`;
   const [state, setState] = useState<BrainState>(initialState);
   const [hydrated, setHydrated] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -101,7 +102,7 @@ export function BrainProvider({ children }: { children: ReactNode }) {
   // Load saved demo state once on the client.
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(KEY);
+      const raw = window.localStorage.getItem(key);
       if (raw) {
         const saved = JSON.parse(raw) as Partial<BrainState>;
         // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration from storage
@@ -111,16 +112,16 @@ export function BrainProvider({ children }: { children: ReactNode }) {
       /* storage unavailable: run with defaults */
     }
     setHydrated(true);
-  }, []);
+  }, [key]);
 
   useEffect(() => {
     if (!hydrated) return;
     try {
-      window.localStorage.setItem(KEY, JSON.stringify(state));
+      window.localStorage.setItem(key, JSON.stringify(state));
     } catch {
       /* ignore */
     }
-  }, [state, hydrated]);
+  }, [state, hydrated, key]);
 
   const notify = useCallback((msg: string) => {
     setToast(msg);
