@@ -510,6 +510,7 @@ body {
   letter-spacing: -0.03em;
 }
 .auth-tab {
+  position: relative;
   display: flex;
   min-height: 46px;
   align-items: center;
@@ -522,10 +523,13 @@ body {
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 .auth-tab:hover { color: var(--ink); }
-.auth-tab[aria-current="page"] {
-  color: var(--ink);
+.auth-tab[aria-current="page"] { color: var(--ink); }
+.auth-tab-pill {
+  position: absolute;
+  inset: -1px; /* over the tab's transparent border */
+  border-radius: inherit;
   background: linear-gradient(180deg, rgba(209, 254, 23, 0.1), rgba(209, 254, 23, 0.03));
-  border-color: rgba(209, 254, 23, 0.45);
+  border: 1px solid rgba(209, 254, 23, 0.45);
   box-shadow: 0 0 24px rgba(209, 254, 23, 0.12), inset 0 0 12px rgba(209, 254, 23, 0.06);
 }
 .auth-input {
@@ -587,6 +591,23 @@ body {
 .auth-secondary:disabled { opacity: 0.6; cursor: progress; }
 .auth-link { color: var(--brand); font-weight: 500; }
 .auth-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+/* Sign In <-> Sign Up view transition (SWAP in components/auth/forms.tsx): only the form body and tab pill move.
+   The old form leaves first and fast, the new one arrives just behind it, so there is never a blank card. */
+::view-transition-group(root) { animation-duration: 280ms; }
+::view-transition-group(auth-tab-pill) { animation-duration: 280ms; animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1); }
+::view-transition-old(.auth-forward),
+::view-transition-old(.auth-back) { animation: auth-out 160ms cubic-bezier(0.4, 0, 1, 1) both; }
+::view-transition-new(.auth-forward),
+::view-transition-new(.auth-back) { animation: auth-in 240ms cubic-bezier(0, 0, 0.2, 1) 60ms both; }
+::view-transition-old(.auth-forward),
+::view-transition-new(.auth-back) { --auth-shift: -10px 0; }
+::view-transition-new(.auth-forward),
+::view-transition-old(.auth-back) { --auth-shift: 10px 0; }
+@keyframes auth-out { to { opacity: 0; translate: var(--auth-shift); } }
+@keyframes auth-in { from { opacity: 0; translate: var(--auth-shift); } }
 @media (prefers-reduced-motion: reduce) {
   .auth-tab, .auth-input, .auth-primary, .auth-secondary { transition: none; }
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) { animation: none !important; }
 }

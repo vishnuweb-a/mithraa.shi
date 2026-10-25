@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { useState, ViewTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { useFormStatus } from "react-dom";
 import { signInWithGoogle } from "@/app/(auth)/actions";
@@ -155,14 +155,24 @@ function GoogleLogo() {
   );
 }
 
-/** Sign In / Sign Up switch from the reference: two links styled as a segmented control. */
+/**
+ * Sign In / Sign Up switch from the reference: two links styled as a segmented control.
+ * prefetch={true} resolves the other page (its ?next) ahead of the click, so the switch commits in one view transition
+ * instead of flashing the layout's Suspense fallback first.
+ */
 export function AuthTabs({ active, next }: { active: "login" | "signup"; next: string }) {
   const q = next === "/" ? "" : `?next=${encodeURIComponent(next)}`;
   return (
     <nav aria-label="Account" className="grid grid-cols-2 gap-1 rounded-[18px] border border-white/[0.08] bg-black/20 p-1">
       {(["login", "signup"] as const).map((t) => (
-        <Link key={t} href={`/${t}${q}`} aria-current={active === t ? "page" : undefined} className="auth-tab">
-          {t === "login" ? "Sign In" : "Sign Up"}
+        <Link key={t} href={`/${t}${q}`} prefetch transitionTypes={[t === "signup" ? "auth-forward" : "auth-back"]} aria-current={active === t ? "page" : undefined} className="auth-tab">
+          {/* one named pill per page, so the view transition morphs it across to the new tab */}
+          {active === t && (
+            <ViewTransition name="auth-tab-pill" share="auto" default="none">
+              <span className="auth-tab-pill" aria-hidden />
+            </ViewTransition>
+          )}
+          <span className="relative">{t === "login" ? "Sign In" : "Sign Up"}</span>
         </Link>
       ))}
     </nav>

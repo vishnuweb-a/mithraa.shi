@@ -24,6 +24,7 @@ eval "$(supabase status -o env)"
 export NEXT_PUBLIC_SUPABASE_URL=$API_URL NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$PUBLISHABLE_KEY
 npm run build                      # NEXT_PUBLIC_* values are inlined at build time
 npm run test:e2e                   # starts `next start` on :3000; needs SERVICE_ROLE_KEY, MAILPIT_URL in env
+E2E_BASE_URL=http://localhost:3001 npm run test:e2e   # UI specs only, beside a `next dev` on :3000 (auth links target :3000)
 ```
 
 The e2e helpers refuse to run against anything but `127.0.0.1`/`localhost`. The service-role key lives

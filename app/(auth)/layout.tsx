@@ -33,7 +33,7 @@ function Brand() {
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="auth-page flex min-h-screen items-center justify-center p-0 sm:p-6">
+    <div className="auth-page flex min-h-screen items-center justify-center p-0 sm:p-6 lg:py-3">
       {/* grid tracks are minmax(0, …) so neither side can push the frame wider than the viewport */}
       <div className="auth-frame relative flex w-full min-w-0 max-w-[1180px] flex-col overflow-hidden lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,500px)]">
         {/* brand side: full composition on desktop, just the mark and headline below lg */}
@@ -83,7 +83,8 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
 
         {/* form side */}
         <section className="relative flex min-w-0 items-start justify-center px-4 pb-8 pt-4 sm:px-10 sm:pb-10 lg:items-stretch lg:p-5 lg:pl-0">
-          <div className="auth-card w-full min-w-0 max-w-[500px] lg:flex lg:max-w-none lg:flex-col lg:justify-center">
+          {/* with tabs (sign in / sign up) content starts at the top, so the tabs sit still when switching */}
+          <div className="auth-card flex w-full min-w-0 max-w-[500px] flex-col gap-5 lg:max-w-none lg:justify-center lg:has-[nav]:justify-start">
             <Suspense fallback={<div className="min-h-[520px]" aria-busy="true" />}>{children}</Suspense>
           </div>
         </section>
