@@ -210,7 +210,8 @@ the original plan: `gate_satisfied` compares departments for HOD rows only, not
 `m.department is not distinct from a.department`. Otherwise a non-HOD member with department
 metadata could never meet an "every holder" row.
 
-**R2. Pending.** Solo projects can be self-financed and self-distributed without recording investor or buyer
+**R2. Implemented** (Phase 1A.2, `20261025120000_self_financing_distribution.sql`, details in
+[SELF_FINANCING_DISTRIBUTION.md](SELF_FINANCING_DISTRIBUTION.md)). Solo projects can be self-financed and self-distributed without recording investor or buyer
 acceptance that did not happen.
 
 - A per-project declaration set by the producer and written to the audit log: financing

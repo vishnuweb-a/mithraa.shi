@@ -170,4 +170,174 @@ wait
 check "a HOD added while the previous gate passes still blocks the next gate" \
   "$(q <<< "select status from public.project_stages where project_id = '$pid' and stage_id = 'prep'")" active
 
+# Gate 5 open with A and B both producers; nothing ticked or signed.
+gate5_project() {
+  local pid
+  pid=$(q <<EOF
+$(as_user "$A")
+select public.create_project('Race modes') \gset
+insert into public.project_members (project_id, user_id, role) values (:'create_project', 'b0000000-0000-0000-0000-00000000000b', 'producer');
+commit;
+select :'create_project';
+EOF
+  )
+  q <<EOF
+update public.project_stages set status = 'passed', passed_at = now() where project_id = '$pid' and stage_id in ('ideate', 'develop', 'write', 'protect');
+update public.project_stages set status = 'active', activated_at = now() where project_id = '$pid' and stage_id = 'finance';
+EOF
+  echo "$pid"
+}
+set_mode() { echo "$(as_user "$1")
+select public.set_project_mode('$2', 'financing', '$3') \\g /dev/null"; }
+attest() { echo "$(as_user "$1")
+insert into public.producer_attestations (project_id, stage_id) values ('$2', 'finance');"; }
+# The mode, the Gate 5 policy and the Gate 5 checklist agree.
+consistent() {
+  q <<< "select (p.financing_mode = 'self') = not exists (select 1 from public.gate_requirements r
+             where r.project_id = p.id and r.stage_id = 'finance' and r.roles = '{investor}')
+           and (p.financing_mode = 'self') = exists (select 1 from public.gate_checklist_items i
+             where i.project_id = p.id and i.stage_id = 'finance' and i.label like 'Self-financing%')
+         from public.projects p where p.id = '$1'"
+}
+
+# 6. Two producers declare self-financing at once: one change, one audit event, consistent policy.
+pid=$(gate5_project)
+{ q <<EOF
+$(set_mode "$A" "$pid" self)
+select pg_sleep(2) \g /dev/null
+commit;
+EOF
+} & sleep 1
+q <<EOF
+$(set_mode "$B" "$pid" self)
+commit;
+EOF
+wait
+check "concurrent mode changes apply once" \
+  "$(q <<< "select count(*) from public.audit_events where project_id = '$pid' and action = 'project.mode_changed'")/$(consistent "$pid")" 1/t
+
+# 7. The first checklist tick is in flight when a producer changes the mode: the change is refused.
+pid=$(gate5_project)
+{ q <<EOF
+$(as_user "$A")
+update public.gate_checklist_items set done = true where project_id = '$pid' and stage_id = 'finance' and position = 1;
+select pg_sleep(2) \g /dev/null
+commit;
+EOF
+} & sleep 1
+q <<EOF 2>/dev/null || true
+$(set_mode "$B" "$pid" self)
+commit;
+EOF
+wait
+check "a mode change waits for an in-flight checklist tick and is refused" \
+  "$(q <<< "select financing_mode from public.projects where id = '$pid'")/$(consistent "$pid")" external/t
+
+# 8. A mode change is in flight when the first tick arrives: the tick lands on no item of the old checklist.
+pid=$(gate5_project)
+{ q <<EOF
+$(set_mode "$B" "$pid" self)
+select pg_sleep(2) \g /dev/null
+commit;
+EOF
+} & sleep 1
+q <<EOF
+$(as_user "$A")
+update public.gate_checklist_items set done = true where project_id = '$pid' and stage_id = 'finance' and position = 1;
+commit;
+EOF
+wait
+check "a tick during a mode change does not touch the new checklist" \
+  "$(q <<< "select count(*) filter (where done) from public.gate_checklist_items where project_id = '$pid' and stage_id = 'finance'")/$(consistent "$pid")" 0/t
+
+# 9. An attestation is in flight when a producer switches back to external: the switch is refused.
+pid=$(gate5_project)
+q <<EOF
+$(set_mode "$A" "$pid" self)
+commit;
+EOF
+{ q <<EOF
+$(attest "$A" "$pid")
+select pg_sleep(2) \g /dev/null
+commit;
+EOF
+} & sleep 1
+q <<EOF 2>/dev/null || true
+$(set_mode "$B" "$pid" external)
+commit;
+EOF
+wait
+check "a mode change during an attestation is refused" \
+  "$(q <<< "select financing_mode from public.projects where id = '$pid'")/$(consistent "$pid")" self/t
+
+# 10. Two producers attest the same gate at once: one attestation.
+{ q <<EOF 2>/dev/null || true
+$(attest "$B" "$pid")
+select pg_sleep(2) \g /dev/null
+commit;
+EOF
+} & sleep 1
+q <<EOF 2>/dev/null || true
+$(attest "$A" "$pid")
+commit;
+EOF
+wait
+check "a repeated attestation is refused" \
+  "$(q <<< "select count(*) from public.producer_attestations where project_id = '$pid'")" 1
+
+# 11. The final Gate 5 signature is in flight when a producer switches to external: the gate passes self-financed.
+q <<EOF
+$(as_user "$A")
+update public.gate_checklist_items set done = true where project_id = '$pid' and stage_id = 'finance';
+commit;
+EOF
+{ q <<EOF
+$(as_user "$A")
+insert into public.approval_decisions (project_id, stage_id, acting_role, decision) values ('$pid', 'finance', 'producer', 'approve');
+select pg_sleep(2) \g /dev/null
+commit;
+EOF
+} & sleep 1
+q <<EOF 2>/dev/null || true
+$(set_mode "$B" "$pid" external)
+commit;
+EOF
+wait
+check "a mode change during the final signature is refused" \
+  "$(q <<< "select s.status || '/' || p.financing_mode from public.project_stages s join public.projects p on p.id = s.project_id
+            where s.project_id = '$pid' and s.stage_id = 'finance'")/$(consistent "$pid")" passed/self/t
+
+# Polls pg_stat_activity until $1 holds, for at most 10 s. Sessions signal each other through application_name.
+wait_for() { echo "do \$\$ begin for i in 1..200 loop
+  -- pg_stat_activity is frozen per transaction unless the snapshot is cleared.
+  perform pg_stat_clear_snapshot();
+  if exists (select 1 from pg_stat_activity where $1) then return; end if; perform pg_sleep(0.05);
+end loop; raise exception 'timed out waiting for: %', \$w\$$1\$w\$; end \$\$;"; }
+
+# 12. A removes producer B and holds the project lock; B's mode change queues behind it and, once A commits,
+#     is refused because B is no longer a producer. Fails if the role check moves before the project lock.
+pid=$(gate5_project)
+{ q <<EOF
+$(as_user "$A")
+delete from public.project_members where project_id = '$pid' and user_id = 'b0000000-0000-0000-0000-00000000000b';
+reset role;
+set application_name = 'race_remover';
+$(wait_for "application_name = 'race_mode_b' and wait_event_type = 'Lock'")
+commit;
+EOF
+} &
+err=$(q 2>&1 <<EOF || true
+$(wait_for "application_name = 'race_remover'")
+set application_name = 'race_mode_b';
+$(set_mode "$B" "$pid" self)
+commit;
+EOF
+)
+wait
+check "a mode change queued behind the producer's own removal is refused" \
+  "$(grep -c 'Only a producer can change' <<< "$err")/$(q <<< "select financing_mode || '/' || (not exists (select 1 from public.project_members
+      where project_id = '$pid' and user_id = 'b0000000-0000-0000-0000-00000000000b')) || '/' || (select count(*) from public.audit_events
+      where project_id = '$pid' and action = 'project.mode_changed') from public.projects where id = '$pid'")/$(consistent "$pid")" \
+  1/external/true/0/t
+
 exit $fail
