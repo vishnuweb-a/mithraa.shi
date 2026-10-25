@@ -227,6 +227,41 @@ export type Database = {
           },
         ]
       }
+      producer_attestations: {
+        Row: {
+          created_at: string
+          id: number
+          project_id: string
+          signer_id: string
+          stage_id: string
+          statement: string
+        }
+        Insert: {
+          created_at?: string
+          id?: never
+          project_id: string
+          signer_id?: string
+          stage_id: string
+          statement?: string
+        }
+        Update: {
+          created_at?: string
+          id?: never
+          project_id?: string
+          signer_id?: string
+          stage_id?: string
+          statement?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "producer_attestations_project_id_stage_id_fkey"
+            columns: ["project_id", "stage_id"]
+            isOneToOne: true
+            referencedRelation: "project_stages"
+            referencedColumns: ["project_id", "stage_id"]
+          },
+        ]
+      }
       profiles: {
         Row: {
           created_at: string
@@ -330,6 +365,8 @@ export type Database = {
           code: string | null
           created_at: string
           created_by: string
+          distribution_mode: Database["public"]["Enums"]["operating_mode"]
+          financing_mode: Database["public"]["Enums"]["operating_mode"]
           id: string
           logline: string | null
           title: string
@@ -339,6 +376,8 @@ export type Database = {
           code?: string | null
           created_at?: string
           created_by: string
+          distribution_mode?: Database["public"]["Enums"]["operating_mode"]
+          financing_mode?: Database["public"]["Enums"]["operating_mode"]
           id?: string
           logline?: string | null
           title: string
@@ -348,6 +387,8 @@ export type Database = {
           code?: string | null
           created_at?: string
           created_by?: string
+          distribution_mode?: Database["public"]["Enums"]["operating_mode"]
+          financing_mode?: Database["public"]["Enums"]["operating_mode"]
           id?: string
           logline?: string | null
           title?: string
@@ -385,10 +426,19 @@ export type Database = {
         Args: { p_code?: string; p_logline?: string; p_title: string }
         Returns: string
       }
+      set_project_mode: {
+        Args: {
+          p_mode: Database["public"]["Enums"]["operating_mode"]
+          p_project: string
+          p_setting: string
+        }
+        Returns: undefined
+      }
     }
     Enums: {
       actor_kind: "human" | "agent" | "system"
       gate_decision: "approve" | "reject"
+      operating_mode: "external" | "self"
       project_role:
         | "producer"
         | "director"
@@ -528,6 +578,7 @@ export const Constants = {
     Enums: {
       actor_kind: ["human", "agent", "system"],
       gate_decision: ["approve", "reject"],
+      operating_mode: ["external", "self"],
       project_role: [
         "producer",
         "director",

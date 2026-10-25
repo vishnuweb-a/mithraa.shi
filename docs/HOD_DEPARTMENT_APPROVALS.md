@@ -11,7 +11,7 @@ is a separate sign-off:
 - **Solo filmmaker.** One account holds `hod/Camera`, `hod/Sound` and `hod/Costume` and signs three times.
 - **Team.** The producer assigns departments to different people. A member can hold several.
 
-Status: R1 is implemented. **R2 (Gate 5 self-financing, Gate 8 self-distribution) is still pending.**
+Status: R1 is implemented. R2 (Gate 5 self-financing, Gate 8 self-distribution) is in [SELF_FINANCING_DISTRIBUTION.md](SELF_FINANCING_DISTRIBUTION.md).
 
 ## Rules
 

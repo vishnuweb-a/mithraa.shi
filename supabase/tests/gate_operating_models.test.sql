@@ -1,5 +1,6 @@
 -- Solo and collaborative operating models for gates. Run with: supabase test db
--- Scenario A: one person holds every role and takes a film through all nine gates without fast-forwarding.
+-- Scenario A: one person holds every role and takes a self-financed, self-distributed film through all nine gates
+--   without fast-forwarding and without investor or buyer roles.
 -- Scenario B: a team splits the roles; only authorised people sign; acting user and role are recorded.
 begin;
 create extension if not exists pgtap with schema extensions;
@@ -22,14 +23,14 @@ select lives_ok($$
   insert into public.project_members (project_id, user_id, role, department) values
     (current_setting('test.solo')::uuid, auth.uid(), 'writer',   null),
     (current_setting('test.solo')::uuid, auth.uid(), 'director', null),
-    (current_setting('test.solo')::uuid, auth.uid(), 'investor', null),
-    (current_setting('test.solo')::uuid, auth.uid(), 'hod',      'All departments'),
-    (current_setting('test.solo')::uuid, auth.uid(), 'client',   null)
-$$, 'solo: owner assigns every gate role to themselves');
-select is((select count(*)::int from public.project_members where project_id = current_setting('test.solo')::uuid), 6,
-  'solo: one person holds six roles');
+    (current_setting('test.solo')::uuid, auth.uid(), 'hod',      'All departments')
+$$, 'solo: owner assigns every internal gate role to themselves');
+select is((select count(*)::int from public.project_members where project_id = current_setting('test.solo')::uuid), 4,
+  'solo: one person holds four roles');
 select is((select count(distinct user_id)::int from public.project_members where project_id = current_setting('test.solo')::uuid), 1,
   'solo: the team is a single account');
+select public.set_project_mode(current_setting('test.solo')::uuid, 'financing', 'self');
+select public.set_project_mode(current_setting('test.solo')::uuid, 'distribution', 'self');
 
 -- Each gate: tick the checklist, then sign once in every role the policy needs, in one statement.
 create temporary table solo_gates (stage_id text, roles text[]) on commit drop;
@@ -38,10 +39,10 @@ insert into solo_gates values
   ('develop',    '{writer,director,producer}'),
   ('write',      '{director,producer}'),
   ('protect',    '{writer,producer}'),
-  ('finance',    '{producer,investor}'),
+  ('finance',    '{producer}'),
   ('prep',       '{producer,director,hod}'),
   ('production', '{director}'),
-  ('post',       '{director,client}'),
+  ('post',       '{director,producer}'),
   ('release',    '{producer}');
 grant select on solo_gates to authenticated;
 
@@ -61,6 +62,7 @@ update public.gate_checklist_items set done = true where project_id = current_se
 insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
   select current_setting('test.solo')::uuid, 'protect', unnest(roles)::public.project_role, 'approve' from solo_gates where stage_id = 'protect';
 update public.gate_checklist_items set done = true where project_id = current_setting('test.solo')::uuid and stage_id = 'finance';
+insert into public.producer_attestations (project_id, stage_id) values (current_setting('test.solo')::uuid, 'finance');
 insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
   select current_setting('test.solo')::uuid, 'finance', unnest(roles)::public.project_role, 'approve' from solo_gates where stage_id = 'finance';
 select is((select status::text from public.project_stages where project_id = current_setting('test.solo')::uuid and stage_id = 'prep'),
@@ -89,6 +91,7 @@ update public.gate_checklist_items set done = true where project_id = current_se
 insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
   select current_setting('test.solo')::uuid, 'production', unnest(roles)::public.project_role, 'approve' from solo_gates where stage_id = 'production';
 update public.gate_checklist_items set done = true where project_id = current_setting('test.solo')::uuid and stage_id = 'post';
+insert into public.producer_attestations (project_id, stage_id) values (current_setting('test.solo')::uuid, 'post');
 insert into public.approval_decisions (project_id, stage_id, acting_role, decision)
   select current_setting('test.solo')::uuid, 'post', unnest(roles)::public.project_role, 'approve' from solo_gates where stage_id = 'post';
 update public.gate_checklist_items set done = true where project_id = current_setting('test.solo')::uuid and stage_id = 'release';
@@ -97,8 +100,8 @@ insert into public.approval_decisions (project_id, stage_id, acting_role, decisi
 
 select is((select count(*)::int from public.project_stages where project_id = current_setting('test.solo')::uuid and status = 'passed'),
   9, 'solo: all nine stages passed by one person');
-select is((select count(*)::int from public.approval_decisions where project_id = current_setting('test.solo')::uuid), 17,
-  'solo: seventeen individual role-specific signatures');
+select is((select count(*)::int from public.approval_decisions where project_id = current_setting('test.solo')::uuid), 16,
+  'solo: sixteen individual role-specific signatures');
 select is((select count(distinct signer_id)::int from public.approval_decisions where project_id = current_setting('test.solo')::uuid), 1,
   'solo: every signature carries the same authenticated user id');
 select is((select count(*)::int from public.approval_decisions
@@ -107,8 +110,7 @@ select is((select count(*)::int from public.audit_events where project_id = curr
   'solo: exactly one gate.passed per gate, even for multi-role inserts');
 select results_eq($$select distinct actor_id, detail ->> 'role' from public.audit_events
     where project_id = current_setting('test.solo')::uuid and action = 'gate.decision' order by 2$$,
-  $$values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'client'), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'director'),
-           ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'hod'), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'investor'),
+  $$values ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'director'), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'hod'),
            ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'producer'), ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid, 'writer')$$,
   'solo: audit names the same person acting in each capacity');
 
