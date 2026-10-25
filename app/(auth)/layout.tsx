@@ -1,5 +1,5 @@
 import { Suspense, type ReactNode } from "react";
-import { KolamMark } from "@/components/shell/Topbar";
+import { KolamMark } from "@/components/shell/KolamMark";
 import { Still, type Scene } from "@/components/media/Still";
 
 const FEATURES = [

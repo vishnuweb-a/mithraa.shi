@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { safeNext } from "@/lib/auth/redirect";
 import { hasRecoverySession } from "@/lib/auth/user";
+import { explain, resetReply } from "@/lib/auth/messages";
 
 export type FormState = { error?: string; fields?: Record<string, string>; sent?: boolean; email?: string; name?: string };
 
@@ -23,17 +24,6 @@ function passwordProblem(password: string) {
   if (password.length > 72) return "Use 72 characters or fewer.";
   if (!/[a-zA-Z]/.test(password) || !/\d/.test(password)) return "Mix letters and numbers.";
 }
-
-// Supabase error codes we explain; anything else gets a generic line so internals never reach the page.
-const MESSAGES: Record<string, string> = {
-  invalid_credentials: "That email and password don't match. Check them and try again.",
-  email_not_confirmed: "Confirm your email first. Open the link we sent when you signed up.",
-  weak_password: "That password is too easy to guess. Try a longer one.",
-  over_email_send_rate_limit: "Too many emails sent. Wait a minute and try again.",
-  over_request_rate_limit: "Too many attempts. Wait a minute and try again.",
-  same_password: "Choose a password you haven't used here before.",
-};
-const explain = (code?: string) => (code && MESSAGES[code]) || "Something went wrong on our side. Try again in a moment.";
 
 export async function signIn(_: FormState, form: FormData): Promise<FormState> {
   const email = str(form, "email");
@@ -91,9 +81,7 @@ export async function requestPasswordReset(_: FormState, form: FormData): Promis
   if (!EMAIL.test(email)) return { email, fields: { email: "Enter a valid email address." } };
   const supabase = await createClient();
   const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${await origin()}/auth/callback?next=/reset-password` });
-  // same reply whether or not the account exists; only rate limits are worth telling apart
-  if (error?.code?.startsWith("over_")) return { email, error: explain(error.code) };
-  return { sent: true, email };
+  return { email, ...resetReply(error) };
 }
 
 export async function updatePassword(_: FormState, form: FormData): Promise<FormState> {

@@ -1,4 +1,5 @@
-import { test, expect } from "@playwright/test";
+import { createHmac } from "node:crypto";
+import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { PASSWORD, accountName, formAlert, createUser, mailCount, mailLink, signIn, signOut, uniqueEmail } from "./helpers";
 
@@ -9,6 +10,16 @@ const WORKSPACE = [
   "/stages/bogus", "/does-not-exist",
 ];
 const COOKIE = "sb-127-auth-token";
+
+/** Request a reset email through the app and open its link in this page (so the PKCE verifier matches). */
+async function openResetLink(page: Page, email: string) {
+  await page.goto("/forgot-password");
+  await page.getByLabel("Email address").fill(email);
+  await page.getByRole("button", { name: "Send reset link" }).click();
+  await expect(page.getByRole("status")).toContainText(email);
+  await page.goto(await mailLink(email));
+  await expect(page.getByLabel("New password", { exact: true })).toBeVisible();
+}
 
 test.describe("route protection (signed out)", () => {
   test("every workspace route redirects to /login with a safe next", async ({ request }) => {
@@ -294,12 +305,7 @@ test.describe("password recovery", () => {
   test("reset link -> new password -> old one stops working", async ({ page }) => {
     const email = uniqueEmail("reset");
     await createUser(email);
-    await page.goto("/forgot-password");
-    await page.getByLabel("Email address").fill(email);
-    await page.getByRole("button", { name: "Send reset link" }).click();
-    await expect(page.getByRole("status")).toContainText(email);
-
-    await page.goto(await mailLink(email));
+    await openResetLink(page, email);
     await expect(page).toHaveURL(/\/reset-password$/);
     const fresh = "New-film-pass-7";
     await page.getByLabel("New password", { exact: true }).fill(fresh);
@@ -312,6 +318,52 @@ test.describe("password recovery", () => {
     await expect(formAlert(page)).toContainText("don't match");
     await signIn(page, email, fresh);
     await expect(page).toHaveURL("http://localhost:3000/");
+  });
+
+  test("a reset form left open cannot set a password once the session is an ordinary sign-in", async ({ page, context }) => {
+    const email = uniqueEmail("stale");
+    await createUser(email);
+    await openResetLink(page, email);
+
+    // tab B, same browser: leave the recovery session and sign in with the current password
+    const tab = await context.newPage();
+    await tab.goto("/");
+    await signOut(tab);
+    await signIn(tab, email);
+    await expect(tab).toHaveURL("http://localhost:3000/");
+
+    // tab A was never reloaded; its form posts straight to updatePassword, now carrying the ordinary session
+    const attempted = "Stale-form-pass-9";
+    await page.getByLabel("New password", { exact: true }).fill(attempted);
+    await page.getByLabel("Confirm new password").fill(attempted);
+    const action = page.waitForResponse((r) => r.request().method() === "POST" && Boolean(r.request().headers()["next-action"]));
+    await page.getByRole("button", { name: "Save password" }).click();
+    expect((await action).status()).toBe(200);
+    await expect(formAlert(page)).toHaveText("This reset link has expired. Request a new one.");
+    await expect(page).toHaveURL(/\/reset-password$/);
+
+    // the ordinary session is untouched, and the password did not change
+    await tab.goto("/brain");
+    await expect(tab).toHaveURL(/\/brain$/);
+    await signOut(tab);
+    await signIn(tab, email, attempted);
+    await expect(formAlert(tab)).toContainText("don't match");
+    await signIn(tab, email);
+    await expect(tab).toHaveURL("http://localhost:3000/");
+  });
+
+  test("a forged recovery claim is not a recovery session", async ({ page, context }) => {
+    // HS256 with a made-up secret: right shape, wrong signature
+    const b64 = (o: object) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const now = Math.floor(Date.now() / 1000);
+    const claims = { sub: crypto.randomUUID(), aud: "authenticated", role: "authenticated", exp: now + 3600, iat: now, amr: [{ method: "recovery", timestamp: now }] };
+    const unsigned = `${b64({ alg: "HS256", typ: "JWT" })}.${b64(claims)}`;
+    const sig = createHmac("sha256", "not-the-project-secret").update(unsigned).digest("base64url");
+    const session = { access_token: `${unsigned}.${sig}`, refresh_token: "forged", expires_at: now + 3600, expires_in: 3600, token_type: "bearer", user: { id: claims.sub } };
+    await context.addCookies([{ name: COOKIE, value: "base64-" + b64(session), url: "http://localhost:3000" }]);
+    await page.goto("/reset-password");
+    await expect(page.getByTestId("reset-invalid")).toBeVisible();
+    await expect(page.getByLabel("New password", { exact: true })).toHaveCount(0);
   });
 
   test("a reset link works once", async ({ page, browser }) => {
@@ -329,6 +381,30 @@ test.describe("password recovery", () => {
     await p.goto(link);
     await expect(p).toHaveURL(/\/login\?error=/);
     await other.close();
+  });
+});
+
+test.describe("signed-in routing", () => {
+  test("an unknown stage shows the not-found page and no stage content (soft 404)", async ({ page }) => {
+    const email = uniqueEmail("bogus");
+    await createUser(email);
+    await signIn(page, email);
+    await expect(page).toHaveURL("http://localhost:3000/");
+
+    const res = await page.goto("/stages/bogus");
+    // accepted: the workspace layout streams before notFound() runs, so the status stays 200 (see SUPABASE_AUTHENTICATION_IMPLEMENTATION.md)
+    expect(res?.status()).toBe(200);
+    expect(res?.headers()["cache-control"]).toContain("no-store");
+    await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
+    await expect(page.getByText("This page could not be found.")).toBeVisible();
+    await expect(page.locator('meta[name="robots"][content="noindex"]').first()).toBeAttached();
+    // no stage dashboard or gate panel from a real stage
+    await expect(page.locator("#gate")).toHaveCount(0);
+
+    // a real stage renders both, so the checks above mean something
+    await page.goto("/stages/prep");
+    await expect(page.locator("#gate")).toBeVisible();
+    await expect(page.locator('meta[name="robots"][content="noindex"]')).toHaveCount(0);
   });
 });
 
