@@ -33,37 +33,39 @@ function Brand() {
 
 export default function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="auth-page flex min-h-screen items-center justify-center p-0 sm:p-6 lg:p-8">
-      <div className="auth-frame relative flex w-full max-w-[1400px] flex-col overflow-hidden lg:flex-row">
+    <div className="auth-page flex min-h-screen items-center justify-center p-0 sm:p-6">
+      {/* grid tracks are minmax(0, …) so neither side can push the frame wider than the viewport */}
+      <div className="auth-frame relative flex w-full min-w-0 max-w-[1180px] flex-col overflow-hidden lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,500px)]">
         {/* brand side: full composition on desktop, just the mark and headline below lg */}
-        <section className="relative flex w-full flex-col gap-6 self-center px-5 pb-2 pt-8 sm:max-w-[640px] sm:px-10 sm:pt-10 lg:w-[54%] lg:max-w-none lg:gap-0 lg:p-14 lg:pb-12">
+        <section className="relative flex min-w-0 flex-col gap-5 self-center px-5 pb-2 pt-8 sm:max-w-[640px] sm:px-10 sm:pt-10 lg:max-w-none lg:gap-0 lg:self-stretch lg:p-10 lg:pb-8">
           <div className="auth-glow" aria-hidden />
           <Brand />
-          <p className="auth-headline relative lg:mt-14">
+          <p className="auth-headline relative lg:mt-8">
             Bring your
             <br />
             <span className="auth-gradient-text">story</span> to screen
           </p>
-          <p className="relative -mt-3 text-[17px] text-[var(--ink-2)] lg:mt-4 lg:text-[21px]">Ideate. Plan. Collaborate. Create.</p>
+          <p className="relative -mt-2 text-[16px] text-[var(--ink-2)] lg:mt-3 lg:text-[19px]">Ideate. Plan. Collaborate. Create.</p>
 
-          <ul className="relative mt-10 hidden flex-col gap-4 lg:flex">
+          <ul className="relative mb-6 mt-7 hidden flex-col gap-2.5 lg:flex">
             {FEATURES.map((f) => (
               <li key={f.title} className="flex items-center gap-4">
-                <span className="flex h-[50px] w-[50px] shrink-0 items-center justify-center rounded-[13px] border border-white/[0.06]" style={{ background: `${f.tint}1f`, color: f.tint }}>
+                <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[13px] border border-white/[0.06]" style={{ background: `${f.tint}1f`, color: f.tint }}>
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                     <path d={f.d} />
                   </svg>
                 </span>
-                <span className="flex flex-col">
-                  <span className="text-[15.5px] font-medium text-[var(--ink)]">{f.title}</span>
-                  <span className="text-[14px] text-[var(--ink-2)] opacity-80">{f.sub}</span>
+                <span className="flex min-w-0 flex-col">
+                  <span className="text-[15px] font-medium text-[var(--ink)]">{f.title}</span>
+                  <span className="text-[13.5px] text-[var(--ink-2)] opacity-80">{f.sub}</span>
                 </span>
               </li>
             ))}
           </ul>
 
-          <div className="relative mt-auto hidden h-[250px] w-full max-w-[640px] pt-10 lg:block xl:h-[280px]" aria-hidden>
-            <svg className="absolute -left-14 bottom-[18%] h-[150px] w-[calc(100%+200px)] text-[#08090b]" viewBox="0 0 800 200" preserveAspectRatio="none">
+          {/* aspect ratio, not a fixed height, so the % sized posters keep their shape at every column width */}
+          <div className="relative mt-auto hidden aspect-[8/3] w-full max-w-[500px] lg:block" aria-hidden>
+            <svg className="absolute -left-10 right-0 bottom-[18%] h-[55%] text-[#08090b]" viewBox="0 0 800 200" preserveAspectRatio="none">
               <path d="M0 140 L90 95 L150 120 L240 70 L330 115 L420 60 L520 105 L600 40 L700 95 L800 55 V200 H0Z" fill="currentColor" />
             </svg>
             {POSTERS.map((p) => (
@@ -80,8 +82,8 @@ export default function AuthLayout({ children }: { children: ReactNode }) {
         </section>
 
         {/* form side */}
-        <section className="relative flex flex-1 items-start justify-center px-4 pb-8 pt-4 sm:px-10 sm:pb-10 lg:items-stretch lg:p-6 lg:pl-0">
-          <div className="auth-card w-full max-w-[560px] lg:flex lg:max-w-none lg:flex-col lg:justify-center">
+        <section className="relative flex min-w-0 items-start justify-center px-4 pb-8 pt-4 sm:px-10 sm:pb-10 lg:items-stretch lg:p-5 lg:pl-0">
+          <div className="auth-card w-full min-w-0 max-w-[500px] lg:flex lg:max-w-none lg:flex-col lg:justify-center">
             <Suspense fallback={<div className="min-h-[520px]" aria-busy="true" />}>{children}</Suspense>
           </div>
         </section>

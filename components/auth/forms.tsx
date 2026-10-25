@@ -11,7 +11,7 @@ function Heading({ title, children }: { title: ReactNode; children: ReactNode })
   return (
     <header className="flex flex-col gap-2">
       <h1 className="auth-title">{title}</h1>
-      <p className="text-[16px] text-[var(--ink-2)] sm:text-[17px]">{children}</p>
+      <p className="text-[15px] text-[var(--ink-2)] sm:text-[16px]">{children}</p>
     </header>
   );
 }
@@ -24,13 +24,13 @@ export function LoginForm({ next, notice }: { next: string; notice?: string }) {
   const [state, action] = useActionState(signIn, {} as FormState);
   const error = state.error ?? (state.fields ? undefined : notice);
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-5">
       <AuthTabs active="login" next={next} />
       <Heading title="Welcome back!">
         Continue your creative journey with <span className="text-[var(--brand)]">mithraa.SHI</span>
       </Heading>
       {error && <Alert>{error}</Alert>}
-      <form action={action} noValidate className="flex flex-col gap-5">
+      <form action={action} noValidate className="flex flex-col gap-4">
         <input type="hidden" name="next" value={next} />
         <Field name="email" label="Email address" icon="mail" type="email" autoComplete="email" placeholder="you@studio.com" defaultValue={state.email} error={state.fields?.email} />
         <Field name="password" label="Password" icon="lock" type="password" autoComplete="current-password" placeholder="Enter your password" error={state.fields?.password} />
@@ -56,7 +56,7 @@ export function SignupForm({ next }: { next: string }) {
   const [state, action] = useActionState(signUp, {} as FormState);
   if (state.sent) {
     return (
-      <div className="flex flex-col gap-7" data-testid="verify-pending">
+      <div className="flex flex-col gap-5" data-testid="verify-pending">
         <Heading title="Check your email">
           We sent a confirmation link to <strong className="text-[var(--ink)]">{state.email}</strong>. Open it on this device to finish creating your
           account. Your account stays unconfirmed until you do.
@@ -72,7 +72,7 @@ export function SignupForm({ next }: { next: string }) {
     );
   }
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-5">
       <AuthTabs active="signup" next={next} />
       <Heading
         title={
@@ -84,7 +84,7 @@ export function SignupForm({ next }: { next: string }) {
         Join mithraa.SHI and start making films with AI agents and your crew.
       </Heading>
       {state.error && <Alert>{state.error}</Alert>}
-      <form action={action} noValidate className="flex flex-col gap-5">
+      <form action={action} noValidate className="flex flex-col gap-4">
         <input type="hidden" name="next" value={next} />
         <Field name="name" label="Full name" icon="user" autoComplete="name" placeholder="Enter your full name" defaultValue={state.name} error={state.fields?.name} />
         <Field name="email" label="Email" icon="mail" type="email" autoComplete="email" placeholder="you@studio.com" defaultValue={state.email} error={state.fields?.email} />
@@ -106,7 +106,7 @@ export function SignupForm({ next }: { next: string }) {
 export function ForgotForm() {
   const [state, action] = useActionState(requestPasswordReset, {} as FormState);
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-5">
       <Heading title="Reset your password">Enter the email you sign in with and we&apos;ll send you a link to choose a new password.</Heading>
       {state.sent ? (
         <Alert tone="ok">
@@ -115,7 +115,7 @@ export function ForgotForm() {
       ) : (
         <>
           {state.error && <Alert>{state.error}</Alert>}
-          <form action={action} noValidate className="flex flex-col gap-5">
+          <form action={action} noValidate className="flex flex-col gap-4">
             <Field name="email" label="Email address" icon="mail" type="email" autoComplete="email" placeholder="you@studio.com" defaultValue={state.email} error={state.fields?.email} />
             <Submit pendingText="Sending…">Send reset link</Submit>
           </form>
@@ -134,10 +134,10 @@ export function ForgotForm() {
 export function ResetForm() {
   const [state, action] = useActionState(updatePassword, {} as FormState);
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-5">
       <Heading title="Choose a new password">You opened a valid reset link. Pick a new password for your account.</Heading>
       {state.error && <Alert>{state.error}</Alert>}
-      <form action={action} noValidate className="flex flex-col gap-5">
+      <form action={action} noValidate className="flex flex-col gap-4">
         <Field name="password" label="New password" icon="lock" type="password" autoComplete="new-password" placeholder="Create a strong password" minLength={8} hint={PASSWORD_HINT} error={state.fields?.password} />
         <Field name="confirm" label="Confirm new password" icon="lock" type="password" autoComplete="new-password" placeholder="Type it again" error={state.fields?.confirm} />
         <Submit pendingText="Saving…">Save password</Submit>
