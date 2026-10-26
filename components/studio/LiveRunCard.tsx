@@ -16,18 +16,20 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
   const ip = outputFor(progress, "ip_scout");
   const completed = progress?.steps.filter(s => s.status === "completed").length ?? 0;
   const [now, setNow] = useState(0);
-  const retryDeadline = progress?.steps.find(
-    step => step.status === "queued" && step.error_code && step.next_attempt_at,
-  )?.next_attempt_at;
-  useEffect(() => {
-    if (!retryDeadline) return;
-    const update = () => setNow(Date.now());
-    // Defer the initial update so hydration stays deterministic.
-    const initial = window.setTimeout(update, 0);
-    const id = window.setInterval(update, 1000);
-    return () => { window.clearTimeout(initial); window.clearInterval(id); };
-  }, [retryDeadline]);
   const { next, waiting, retryAt, cancelled, canAdvance } = runControls(progress, busy, now);
+  useEffect(() => {
+    if (retryAt === null || retryAt <= now) return;
+    let id: ReturnType<typeof setInterval> | undefined;
+    const update = () => {
+      const current = Date.now();
+      setNow(current);
+      if (current >= retryAt && id !== undefined) window.clearInterval(id);
+    };
+    // Defer the first clock update to preserve hydration consistency.
+    const initial = window.setTimeout(update, 0);
+    id = window.setInterval(update, 1000);
+    return () => { window.clearTimeout(initial); if (id !== undefined) window.clearInterval(id); };
+  }, [retryAt]);
   const title = idea?.title ?? "Your idea is queued";
 
   return (
