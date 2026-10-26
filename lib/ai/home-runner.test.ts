@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AgentExecution } from "./contracts.ts";
@@ -12,6 +12,17 @@ const ideaId = "f3000000-0000-4000-8000-000000000003";
 const stepId = "f3000000-0000-4000-8000-000000000004";
 const token = "f3000000-0000-4000-8000-000000000005";
 const model = "openai/gpt-oss-20b";
+
+const originalApprovedUser = process.env.HOME_GROQ_TEST_USER_ID;
+beforeEach(() => {
+  // Every normal runner test uses an approved session. The denial test below
+  // deliberately clears or changes this variable after beforeEach.
+  process.env.HOME_GROQ_TEST_USER_ID = ownerId;
+});
+after(() => {
+  if (originalApprovedUser === undefined) delete process.env.HOME_GROQ_TEST_USER_ID;
+  else process.env.HOME_GROQ_TEST_USER_ID = originalApprovedUser;
+});
 
 function fixture(options: {
   mode?: string; pinnedModel?: unknown; leaseRunId?: string;
@@ -83,6 +94,26 @@ const agentResult: AgentExecution<"idea_capture"> = {
   provider: "groq", model, promptVersion: "home-agents-v1",
   usage: { inputTokens: 11, outputTokens: 22, source: "provider" },
 };
+
+test("privileged runner denies missing and wrong approved user before any DB or Groq call", async () => {
+  for (const approved of [undefined, "f3000000-0000-4000-8000-000000000006", " "]) {
+    if (approved === undefined) delete process.env.HOME_GROQ_TEST_USER_ID;
+    else process.env.HOME_GROQ_TEST_USER_ID = approved;
+    const fx = fixture();
+    let providerCalls = 0;
+    await assert.rejects(
+      executeRunStep(runId, ownerId, {
+        db: fx.db,
+        runAgent: (async () => { providerCalls++; return agentResult; }) as typeof runHomeAgent,
+      }),
+      (error: unknown) => error instanceof HomeRequestError &&
+        error.status === 403 && error.code === "agent_execution_restricted",
+    );
+    assert.deepEqual(fx.calls, [], "no privileged DB query or RPC is allowed");
+    assert.deepEqual(fx.finished, [], "no writes are allowed");
+    assert.equal(providerCalls, 0, "no paid provider call is allowed");
+  }
+});
 
 test("bad pin injected directly into queued RPC fails before Groq and cannot retry", async () => {
   const fx = fixture({ pinnedModel: "unapproved/paid-model" });
