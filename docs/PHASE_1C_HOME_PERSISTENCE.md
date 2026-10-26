@@ -23,7 +23,7 @@ The existing files `components/studio/ideaEngine.ts` and `components/studio/useR
 
 Tables are separate from the existing `projects`, `project_members`, `project_stages`, `approval_decisions`, `brain_records`, and `audit_events`. An idea can exist without creating a project or bypassing Gate 1.
 
-RLS is enabled on all six new tables; only the owner can read. The client has **SELECT ONLY**, no INSERT/UPDATE/DELETE grants. The privileged worker cannot directly UPDATE/DELETE historical `idea_versions` either; a `BEFORE UPDATE` immutable-history trigger also guards table-owner writes, while foreign-key cascade deletion remains allowed. All agent-authored outputs and provider usage require the trusted backend, never direct client input. Both `agent_runs` and `agent_steps` use `private.touch_updated_at()` triggers.
+RLS is enabled on all six new tables; only the owner can read. The client has **SELECT ONLY**, no INSERT/UPDATE/DELETE grants. The privileged worker cannot directly UPDATE/DELETE historical `idea_versions` either; a `BEFORE UPDATE` immutable-history trigger also guards table-owner writes, while foreign-key cascade deletion remains allowed. All agent-authored outputs and provider usage require the trusted backend, never direct client input. `idea_drafts`, `agent_runs`, and `agent_steps` use `private.touch_updated_at()` triggers. No worker or RPC needs to set these timestamps manually.
 
 ## Authenticated API/RPC contract
 
@@ -72,14 +72,14 @@ npx supabase db reset --local
 npx supabase test db --local
 ```
 
-The new `supabase/tests/home_idea_persistence.test.sql` has **45 assertions**:
+The new `supabase/tests/home_idea_persistence.test.sql` has **46 assertions**:
 - role `anon` and authenticated anonymous-JWT access both rejected; direct client writes rejected
 - saved draft/version and choice persistence
 - revision history and validation, title preservation, owner-independent immutable-history guards
 - run queue, four agent rows, true queued status
 - retry idempotency / duplicate run refusal
 - quota-related foundation and cancellation request
-- spoofed output and usage writes rejected; `updated_at` triggers verified
+- spoofed output and usage writes rejected; `updated_at` triggers verified for drafts, runs and steps
 - cross-user isolation and forbidden mutations
 
 The two-session `supabase/tests/concurrency.sh` adds a same-user/same-key agent queue race: both callers receive the same run ID, exactly one run exists, and exactly four agent steps were created. CI runs all pgTAP suites and concurrency tests via an isolated local Supabase stack. Run the full existing TypeScript, lint, unit, Playwright, production-build and Ponytail security review checks before marking the PR ready.
