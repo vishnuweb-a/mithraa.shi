@@ -36,7 +36,7 @@ Files:
 
 Market research uses **two separate provider calls**: search with `tools:[{type:"browser_search"}]` and `tool_choice:"required"`, then structured extraction using a JSON schema. Groq does not support browser tools and strict structured outputs within the same request. The model may lack browser search access on a specific free account: propagate a real provider error; do **not** fall back to invented market statistics or silently label them sourced.
 
-Even when an HTTPS URL appears inside search evidence, it is a **source candidate**, not a human-verified claim. Phase 1C.3 must persist it in `research_sources` with `verified=false` unless independently checked; the UI must show clear provenance/limitations. The provider does not claim an independent live verification.
+Only an **exact whole HTTPS URL extracted from search evidence** can be attached to a sourced market insight; partial paths and bare-domain prefixes are rejected. Even when an HTTPS URL appears inside search evidence, it is a **source candidate**, not a human-verified claim. Phase 1C.3 must persist it in `research_sources` with `verified=false` unless independently checked; the UI must show clear provenance/limitations. The provider does not claim an independent live verification.
 
 IP screening is not legal clearance. The validator rejects `legalClearanceGranted=true` and requires an explicit review state; agents must never change Project Brain approval gates.
 
@@ -46,7 +46,7 @@ IP screening is not legal clearance. The validator rejects `legalClearanceGrante
 - No model calls or secret access from a client component. No key in `NEXT_PUBLIC_*`, repository or PR.
 - Model IDs are restricted to `openai/gpt-oss-20b` and `openai/gpt-oss-120b`.
 - `compare` mode explicitly throws until Phase 1C.3 has safe multi-run limits and cost policy.
-- Fixed 25-second request deadline and sanitized failure messages. A 429 exception includes `retryAfterSeconds`, handled by the forthcoming worker.
+- Fixed 25-second request deadline, including response body download, with separate user-cancel and timeout outcomes. A 429 exception includes `retryAfterSeconds`, handled by the forthcoming worker. For other HTTP 400 responses, a short allowlisted-format `providerCode` (such as `json_validate_failed`) can guide retry policy; complete Groq error messages are never forwarded.
 - Access control, per-user 10-run limit, exactly-once database queueing, and run-cancellation flag remain in the already deployed Phase 1C.1 schema.
 - These calls must only be invoked after authenticating a real user and enforcing database run ownership/quota in Phase 1C.3.
 - Provider token usage is returned as measured or unavailable; no fabricated pricing/credit-wallet debits.
@@ -61,7 +61,7 @@ Current Groq reference docs:
 
 ## Tests and acceptance
 
-`npm run test:unit` executes existing auth unit tests and the new AI unit tests. AI tests exercise all four agents via a fake provider, model selection, runtime schema and IP safeguards, evidence-url rules, combined research/extraction token usage, real Groq request payload shapes, retry-after parsing, server-key absence and sanitized errors. They **do not** make real Groq calls.
+`npm run test:unit` executes existing auth unit tests and the new AI unit tests. AI tests exercise all four agents via a fake provider, model selection, runtime schema and IP safeguards, **exact-match evidence URL checks** (including malicious bare-domain/partial-path cases), combined research/extraction token usage, real Groq request payload shapes, retry-after parsing, server-key absence, sanitized HTTP 400 error codes and response-download cancellation. They **do not** make real Groq calls. The AI unit suite contains **19 tests**, including the 6 added during Ponytail remediation.
 
 Before merging: require CI typecheck, lint, unit tests, build, existing local Supabase pgTAP/concurrency tests and browser E2E. Ponytail-review the entire PR.
 
