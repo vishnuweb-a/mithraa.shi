@@ -1,4 +1,4 @@
-import { HomeRequestError, requireSameOrigin, requireUuid } from "@/lib/ai/home-http";
+import { requireSameOrigin, requireUuid } from "@/lib/ai/home-http";
 import { jsonPrivate, requireHomeExecution, requireHomeUser, respondHomeError } from "@/lib/ai/home-server";
 import { executeRunStep } from "@/lib/ai/home-runner";
 
@@ -16,7 +16,6 @@ export async function POST(request: Request, context: { params: Promise<{ runId:
     return jsonPrivate(outcome, outcome.state === "idle" ? 202 : 200);
   } catch (error) {
     // Credentials, provider error text, or user story never enter the response.
-    if (error instanceof HomeRequestError) return respondHomeError(error);
     return respondHomeError(error);
   }
 }
