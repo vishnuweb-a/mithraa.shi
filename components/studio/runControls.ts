@@ -21,3 +21,9 @@ export function idleAdvanceMessage(state: string, after: HomeProgress): string |
   const stillQueued = after.steps.some(step => step.status === "queued" || step.status === "running");
   return stillQueued ? "This step is not ready yet. Please try again shortly." : null;
 }
+
+/** A lost cancel response is success if the DB recorded the request or finalized it. */
+export function cancelErrorMessage(original: string, after: HomeProgress): string | null {
+  return TERMINAL_RUN_STATUSES.has(after.run.status) || after.run.cancel_requested_at
+    ? null : original;
+}
