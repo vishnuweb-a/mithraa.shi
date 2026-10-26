@@ -2,6 +2,7 @@ import "server-only";
 import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
 import { HomeRequestError, executionIsEnabled } from "./home-http.ts";
+export { translateDbError } from "./home-db-errors.ts";
 
 /**
  * The checked-in generated DB types predate Phase 1C.1.
@@ -51,17 +52,3 @@ export function respondHomeError(error: unknown): Response {
   return jsonPrivate({ error: "internal_error" }, 500);
 }
 
-export function translateDbError(error: { code?: string; message?: string } | null): HomeRequestError {
-  switch (error?.code) {
-    case "23505": return new HomeRequestError(409, "run_already_active");
-    case "42501": return new HomeRequestError(404, "resource_unavailable");
-    case "22023": return new HomeRequestError(400, "invalid_run_request");
-    case "P0001":
-      // The database also uses P0001 for a locked idea. Do not expose raw text.
-      if (error?.message?.includes("Daily agent run limit")) {
-        return new HomeRequestError(429, "daily_run_limit");
-      }
-      return new HomeRequestError(409, "run_request_unavailable");
-    default: return new HomeRequestError(500, "database_operation_failed");
-  }
-}
