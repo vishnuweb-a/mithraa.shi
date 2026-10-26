@@ -1,8 +1,10 @@
 import type { HomeProgress } from "./home-run-types.ts";
 
+export const TERMINAL_RUN_STATUSES = new Set(["completed", "partial", "failed", "cancelled"]);
+
 /** Pure UI policy. The server remains authoritative about leases and retry eligibility. */
 export function runControls(progress: HomeProgress | null, busy: boolean, now = Date.now()) {
-  const terminal = Boolean(progress && ["completed", "partial", "failed", "cancelled"].includes(progress.run.status));
+  const terminal = Boolean(progress && TERMINAL_RUN_STATUSES.has(progress.run.status));
   const next = progress?.steps.find(s => !["completed", "skipped", "failed"].includes(s.status));
   const cancelled = Boolean(progress?.run.cancel_requested_at);
   const retryAt = next?.status === "queued" && next.error_code && next.next_attempt_at
