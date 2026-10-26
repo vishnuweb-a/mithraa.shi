@@ -5,7 +5,7 @@
  * Docs: https://console.groq.com/docs/api-reference
  * Browser search and strict JSON-schema response formats CANNOT be combined.
  */
-import type { ModelProvider, ModelResult, TokenUsage } from "../contracts";
+import type { ModelProvider, ModelResult, TokenUsage } from "../contracts.ts";
 
 const ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const TIMEOUT_MS = 25_000;
