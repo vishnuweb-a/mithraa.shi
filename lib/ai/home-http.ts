@@ -5,9 +5,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const IDEMPOTENCY_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
 export class HomeRequestError extends Error {
-  constructor(public readonly status: number, public readonly code: string) {
+  readonly status: number;
+  readonly code: string;
+  constructor(status: number, code: string) {
     super(code);
     this.name = "HomeRequestError";
+    this.status = status;
+    this.code = code;
   }
 }
 
