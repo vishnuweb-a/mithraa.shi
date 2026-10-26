@@ -20,11 +20,23 @@ test("running step permits a new claim attempt to recover expired lease", () => 
 });
 test("queued step with error code indicates retry wait, without deadlocking Continue", () => {
   const result = runControls(run("running", [step("queued", "rate_limited")]), false);
-  assert.equal(result.waiting, true);
+  assert.equal(result.waiting, false);
   assert.equal(result.canAdvance, true);
 });
 test("terminal, busy, and completed steps block execution", () => {
   assert.equal(runControls(run("completed", [step("completed")]), false).canAdvance, false);
   assert.equal(runControls(run("running", [step("queued")]), true).canAdvance, false);
   assert.equal(runControls(run("running", [step("completed")]), false).canAdvance, false);
+});
+
+test("future retry deadline blocks another model attempt until eligible", () => {
+  const p = run("running", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:00Z" }]);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:00:00Z")).waiting, true);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:00:00Z")).canAdvance, false);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:01:00Z")).canAdvance, true);
+});
+
+test("cancellation finalization remains available even during retry cooldown", () => {
+  const p = run("running", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:00Z" }], true);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:00:00Z")).canAdvance, true);
 });
