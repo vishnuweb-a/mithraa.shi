@@ -1,6 +1,7 @@
 "use client";
 
 import { AiTag } from "@/components/ui";
+import { useEffect, useState } from "react";
 import { LIVE_AGENTS, outputFor } from "./useHomeRun";
 import type { useHomeRun } from "./useHomeRun";
 import { runControls } from "./runControls";
@@ -14,7 +15,13 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
   const score = outputFor(progress, "premise_scorer");
   const ip = outputFor(progress, "ip_scout");
   const completed = progress?.steps.filter(s => s.status === "completed").length ?? 0;
-  const { next, waiting, cancelled, canAdvance } = runControls(progress, busy);
+  const [now, setNow] = useState(0);
+  useEffect(() => {
+    const update = () => setNow(Date.now());
+    const id = window.setInterval(update, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const { next, waiting, retryAt, cancelled, canAdvance } = runControls(progress, busy, now);
   const title = idea?.title ?? "Your idea is queued";
 
   return (
@@ -82,14 +89,14 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
         <div className="text-[12px] text-[var(--muted)]">
           <strong className="text-[var(--ink)]">{completed}/4 agents complete</strong>
           <span className="ml-2">· {progress?.run.status ?? "Loading run"}{cancelled ? " · cancellation requested" : ""}</span>
-          {waiting && next?.next_attempt_at && <p>Retry allowed after {new Date(next.next_attempt_at).toLocaleString()}</p>}
+          {waiting && retryAt !== null && <p role="status">Paused — {next?.error_code === "rate_limited" ? "Groq rate limit reached" : "retry scheduled"}. Retry available {new Date(retryAt).toLocaleString()} ({Math.ceil((retryAt - now) / 1000)} seconds remaining).</p>}
           <p className="mt-1">No automatic Groq calls: each Continue executes at most one step.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {terminal && <button type="button" className="btn" onClick={reset}>New idea</button>}
-          {!terminal && <button type="button" className="btn" onClick={() => void cancel()} disabled={busy || cancelled || !progress}>Cancel</button>}
+          {!terminal && <button type="button" className="btn" onClick={() => { if (window.confirm("Cancel this run permanently? Remaining agents will be skipped. Completed results are preserved.")) void cancel(); }} disabled={busy || cancelled || !progress}>Cancel</button>}
           {!terminal && <button type="button" className="btn btn-primary" onClick={() => void advance()} disabled={!canAdvance}>
-            {busy ? "Processing…" : cancelled ? "Finalize cancellation" : waiting ? "Check retry" : "Continue next agent"}
+            {busy ? "Processing…" : cancelled ? "Finalize cancellation" : waiting ? "Waiting for retry" : "Continue next agent"}
           </button>}
         </div>
       </div>
