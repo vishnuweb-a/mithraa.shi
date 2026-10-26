@@ -1,7 +1,7 @@
 import "server-only";
 import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
-import { HomeRequestError, executionIsEnabled } from "./home-http.ts";
+import { HomeRequestError, executionIsEnabled, approvedHomeTestUser } from "./home-http.ts";
 export { translateDbError } from "./home-db-errors.ts";
 
 /**
@@ -52,3 +52,10 @@ export function respondHomeError(error: unknown): Response {
   return jsonPrivate({ error: "internal_error" }, 500);
 }
 
+
+/** Only the designated test account can trigger paid Groq requests. */
+export function requireHomeTestUser(userId: string): void {
+  if (!approvedHomeTestUser(userId)) {
+    throw new HomeRequestError(403, "agent_execution_restricted");
+  }
+}
