@@ -2,7 +2,7 @@
 -- All checks use throwaway local Supabase in CI; no production access.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(36);
+select plan(45);
 
 insert into auth.users (id, email, raw_user_meta_data) values
  ('fa000000-0000-0000-0000-000000000001','home-a@example.test','{"display_name":"Home A"}'),
@@ -14,6 +14,15 @@ select throws_ok($$select public.create_idea_draft('No session')$$,
   '42501', null, 'anonymous cannot save an idea');
 select throws_ok($$select * from public.idea_drafts$$,
   '42501', null, 'anonymous cannot read idea drafts');
+reset role;
+
+-- Anonymous *sign-in* carries role=authenticated; test the JWT guard, not the
+-- anon SQL role's execute grant (which would fail before entering the function).
+select set_config('request.jwt.claims',
+  '{"sub":"fa000000-0000-0000-0000-000000000001","role":"authenticated","is_anonymous":true}', true);
+set local role authenticated;
+select throws_ok($select public.create_idea_draft('Anonymous session')$,
+  '42501', null, 'anonymous authenticated JWT cannot create an idea');
 reset role;
 
 select set_config('request.jwt.claims',
@@ -96,6 +105,40 @@ select lives_ok($$select public.request_idea_run_cancel(
   'owner can request cancellation');
 select ok((select cancel_requested_at is not null from public.agent_runs),
   'cancellation requests are persisted without falsely ending a run');
+
+-- Revising text alone must preserve the title in both draft and snapshot.
+select is(public.revise_idea_draft(current_setting('test.home_idea')::uuid,
+    'Changed text, same title'), 3,
+  'text-only revision creates a new version');
+select is((select working_title from public.idea_drafts
+    where id = current_setting('test.home_idea')::uuid),
+    'Island Rising', 'text-only revision preserves the draft title');
+select is((select working_title from public.idea_versions
+    where idea_id = current_setting('test.home_idea')::uuid and version_number = 3),
+    'Island Rising', 'new version preserves the title');
+select is((select idea_version from public.agent_runs where id = current_setting('test.home_run')::uuid),
+  2, 'in-flight run still refers to its original immutable version');
+
+reset role;
+set local role service_role;
+-- service_role may bypass RLS: trigger must still reject historical rewrites.
+select throws_ok($update public.idea_versions set original_text = 'tampered'$,
+  '42501', null, 'trusted worker cannot alter historical versions');
+select throws_ok($delete from public.idea_versions$,
+  '42501', null, 'trusted worker cannot directly delete historical versions');
+
+-- PostgreSQL triggers, not a worker's discipline, own updated_at.
+update public.agent_runs set updated_at = '2000-01-01'::timestamptz
+  where id = current_setting('test.home_run')::uuid;
+select ok((select updated_at > '2000-01-01'::timestamptz from public.agent_runs
+    where id = current_setting('test.home_run')::uuid),
+  'agent_runs updated_at is maintained by trigger');
+update public.agent_steps set updated_at = '2000-01-01'::timestamptz
+  where run_id = current_setting('test.home_run')::uuid;
+select ok((select bool_and(updated_at > '2000-01-01'::timestamptz) from public.agent_steps
+    where run_id = current_setting('test.home_run')::uuid),
+  'agent_steps updated_at is maintained by trigger');
+reset role;
 
 -- Another signed-in user must see nothing and cannot mutate either draft or run.
 select set_config('request.jwt.claims',
