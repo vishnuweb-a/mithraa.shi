@@ -2,8 +2,6 @@ import { requireUuid } from "@/lib/ai/home-http";
 import { HomeRequestError } from "@/lib/ai/home-http";
 import { jsonPrivate, requireHomeUser, respondHomeError, translateDbError } from "@/lib/ai/home-server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 /** Read-only owner status endpoint for future polling UI. */
 export async function GET(_request: Request, context: { params: Promise<{ runId: string }> }): Promise<Response> {
