@@ -13,7 +13,7 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
   const score = outputFor(progress, "premise_scorer");
   const ip = outputFor(progress, "ip_scout");
   const completed = progress?.steps.filter(s => s.status === "completed").length ?? 0;
-  const next = progress?.steps.find(s => s.status !== "completed" && s.status !== "cancelled" && s.status !== "failed");
+  const next = progress?.steps.find(s => s.status !== "completed" && s.status !== "skipped" && s.status !== "failed");
   const waiting = next?.status === "queued" && Boolean(next.error_code);
   const cancelled = Boolean(progress?.run.cancel_requested_at);
   const canAdvance = Boolean(runId && progress && !terminal && !busy && next);
