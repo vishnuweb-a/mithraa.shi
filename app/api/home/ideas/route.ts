@@ -2,8 +2,6 @@ import { AgentValidationError, checkIdeaInput, type IdeaInput } from "@/lib/ai/c
 import { HomeRequestError, readJsonObject, requireSameOrigin } from "@/lib/ai/home-http";
 import { jsonPrivate, requireHomeUser, respondHomeError, translateDbError } from "@/lib/ai/home-server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 const SOURCE_TYPES = new Set(["one_line", "voice_note", "news_clipping", "book"]);
 
