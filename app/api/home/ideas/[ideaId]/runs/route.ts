@@ -1,8 +1,6 @@
 import { HomeRequestError, parseQueueOptions, readJsonObject, requireSameOrigin, requireUuid } from "@/lib/ai/home-http";
 import { jsonPrivate, requireHomeExecution, requireHomeUser, respondHomeError, translateDbError } from "@/lib/ai/home-server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 /** Queue an owner-scoped, idempotent run. This does not invoke Groq. */
 export async function POST(request: Request, context: { params: Promise<{ ideaId: string }> }): Promise<Response> {
