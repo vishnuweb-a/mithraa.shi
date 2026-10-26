@@ -1,28 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
-import { useBrain } from "@/components/brain/BrainProvider";
+import { useState } from "react";
 import { Still, type Scene } from "@/components/media/Still";
-import { AiTag } from "@/components/ui";
-import { PROJECT, STAGES, roleById } from "@/lib/data";
-import { EXAMPLES, runIdeaAgents, type IdeaResult } from "./ideaEngine";
-import { typed, useRun } from "./useRun";
-
-const RUN_STEPS = [
-  { id: "orch", ms: 800 },
-  { id: "capture", ms: 3200 },
-  { id: "market", ms: 2000 },
-  { id: "score", ms: 2400 },
-  { id: "ip", ms: 1400 },
-];
-
-const AGENTS = [
-  { id: "capture", name: "Idea Capture" },
-  { id: "market", name: "Market Scout" },
-  { id: "score", name: "Premise Scorer" },
-  { id: "ip", name: "IP Scout" },
-];
+import { PROJECT, STAGES } from "@/lib/data";
+import { EXAMPLES } from "./ideaEngine";
+import { useHomeRun } from "./useHomeRun";
+import { LiveRunCard } from "./LiveRunCard";
 
 /** Setting tiles across the top of the composer, like a film setup. */
 const SETTINGS: { k: string; icon: string; tint: string; options: string[] }[] = [
@@ -33,12 +17,9 @@ const SETTINGS: { k: string; icon: string; tint: string; options: string[] }[] =
 ];
 
 export function Studio() {
-  const { role, log, notify } = useBrain();
   const [text, setText] = useState("");
   const [settings, setSettings] = useState<Record<string, number>>({});
-  const [idea, setIdea] = useState<IdeaResult | null>(null);
-  const [decision, setDecision] = useState<"greenlit" | "parked" | null>(null);
-  const run = useRun(RUN_STEPS);
+  const run = useHomeRun();
   const active = STAGES.find((s) => s.id === "prep")!;
 
   const val = (k: string) => {
@@ -47,20 +28,30 @@ export function Studio() {
   };
 
   const go = () => {
+    if (run.busy || run.runId) return;
     const src = val("Source");
     const spark = text.trim() || EXAMPLES.find((e) => e.k === src)?.text || EXAMPLES[0].text;
     if (!text.trim()) setText(spark);
-    setIdea(runIdeaAgents(`${spark} ${val("Language") !== "Tamil" ? val("Language") : ""}`));
-    setDecision(null);
-    run.start();
+    const language: Record<string, string> = { Tamil: "ta", Hindi: "hi", Telugu: "te", Malayalam: "ml" };
+    const source: Record<string, string> = { "Voice note": "voice_note", "One line": "one_line", "News clipping": "news_clipping", Book: "book" };
+    const format: Record<string, string> = { Feature: "theatrical_feature", Series: "ott_series", Short: "micro_drama" };
+    void run.start({
+      originalText: spark,
+      languageCode: language[val("Language")] ?? "en",
+      templateKey: format[val("Format")] ?? "theatrical_feature",
+      productionMode: "shot",
+      qualityTier: "standard",
+      sourceType: source[src] ?? "one_line",
+    });
   };
 
-  const running = run.started && !run.done;
+  const running = run.busy || Boolean(run.runId && !run.terminal);
 
   return (
     <div className="flex min-h-[calc(100vh-64px)] flex-col items-center justify-center gap-8 py-6">
-      {!run.started ? <Hero /> : idea && <RunCard idea={idea} run={run} decision={decision} setDecision={setDecision} role={role} log={log} notify={notify} />}
+      {!run.runId ? <Hero /> : <LiveRunCard controller={run} />}
 
+      {run.error && !run.runId && <p role="alert" className="w-full max-w-[880px] rounded-[12px] bg-red-500/10 p-3 text-red-300">{run.error}</p>}
       {/* Composer */}
       <div className="w-full max-w-[880px]">
         <div className="flex gap-2 rounded-[22px] bg-[var(--sheet)] p-2">
@@ -124,7 +115,7 @@ export function Studio() {
                     <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)]" /> Ideate agents
                   </span>
                   <span className="shrink-0 rounded-[8px] bg-black/25 px-2 py-1 text-[var(--ink-2)]">Stops at Gate 1</span>
-                  <span className="shrink-0 rounded-[8px] bg-black/25 px-2 py-1 text-[var(--ink-2)]">About 10 s</span>
+                  <span className="shrink-0 rounded-[8px] bg-black/25 px-2 py-1 text-[var(--ink-2)]">Owner-controlled live AI</span>
                 </div>
               </div>
               <button
@@ -132,7 +123,7 @@ export function Studio() {
                 disabled={running}
                 className="flex w-[112px] shrink-0 flex-col items-center justify-center gap-1 rounded-[14px] bg-[var(--brand)] text-[var(--on-brand)] transition-colors hover:bg-[#dcff55] disabled:opacity-60"
               >
-                <span className="title-wide text-[14px]">{running ? "Running" : run.done ? "Run again" : "Run agents"}</span>
+                <span className="title-wide text-[14px]">{run.busy ? "Starting" : running ? "Run active" : "Run agents"}</span>
                 <span className="flex items-center gap-1 text-[12px] font-medium">
                   {running ? <span className="h-3 w-3 rounded-full border-2 border-black/25 border-t-black spin" /> : <span aria-hidden>✦</span>} 4
                 </span>
@@ -143,7 +134,7 @@ export function Studio() {
       </div>
 
       {/* Continue */}
-      {!run.started && (
+      {!run.runId && (
         <Link href="/stages/prep" className="group flex w-full max-w-[880px] items-center gap-4 rounded-[18px] border border-[var(--rule)] p-2.5 pr-4 hover:bg-white/[0.03]">
           <span className="media aspect-[16/10] w-[96px] shrink-0 !rounded-[12px]">
             <Still scene="dawn-courtyard" />
@@ -193,118 +184,3 @@ function Hero() {
   );
 }
 
-/* ------------------------------------------------------------------ */
-
-function RunCard({
-  idea,
-  run,
-  decision,
-  setDecision,
-  role,
-  log,
-  notify,
-}: {
-  idea: IdeaResult;
-  run: ReturnType<typeof useRun>;
-  decision: "greenlit" | "parked" | null;
-  setDecision: (d: "greenlit" | "parked") => void;
-  role: ReturnType<typeof useBrain>["role"];
-  log: (a: string, t: string) => void;
-  notify: (m: string) => void;
-}) {
-  const pc = run.progress("capture");
-  const pm = run.progress("market");
-  const ps = run.progress("score");
-  const pi = run.progress("ip");
-  const canSign = STAGES[0].gate.approvers.includes(role);
-
-  return (
-    <article className="rise w-full max-w-[880px] overflow-hidden rounded-[22px] bg-[var(--sheet)]">
-      <div className="grid gap-0 md:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-        <div className="media relative aspect-[16/11] !rounded-none md:aspect-auto md:min-h-[300px]">
-          {pc > 0.3 ? <Still scene={idea.scene} className="rise" /> : <div className="media-fill shimmer" />}
-          <span className="absolute top-3 left-3 z-[2]">
-            <AiTag accepted={decision === "greenlit"} />
-          </span>
-        </div>
-
-        <div className="flex flex-col gap-4 p-5 md:p-6">
-          <div className="flex flex-col gap-2">
-            <span className="text-[12px] muted">Idea Card</span>
-            <h2 className={`display text-[40px] md:text-[48px] ${pc < 0.3 ? "caret" : ""}`}>{typed(idea.title, pc / 0.3) || " "}</h2>
-            <p className={`text-[14.5px] leading-relaxed text-[var(--ink-2)] ${pc >= 0.3 && pc < 1 ? "caret" : ""}`}>{typed(idea.logline, (pc - 0.3) / 0.6)}</p>
-          </div>
-
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-3 border-t border-[var(--rule)] pt-4 text-[13px]">
-            <Fact k="Genre" v={pc >= 1 ? `${idea.genre}, ${idea.tone[0].toLowerCase()}` : ""} />
-            <Fact k="Premise score" v={ps > 0 ? <span className="text-[var(--brand)]">{Math.round(idea.overall * ps)}</span> : ""} />
-            <Fact k="Market" v={pm >= 1 ? idea.market[0].note : ""} />
-            <Fact k="Rights" v={pi >= 1 ? (idea.ip.status === "clear" ? "Original, clear" : "Needs a check") : ""} />
-          </dl>
-
-          <ol className="mt-auto flex flex-wrap gap-1.5">
-            {AGENTS.map((a) => {
-              const p = run.progress(a.id);
-              const st = p >= 1 ? "done" : p > 0 ? "run" : "wait";
-              return (
-                <li key={a.id} className={`flex items-center gap-1.5 rounded-[9px] px-2.5 py-1 text-[12px] ${st === "run" ? "bg-[var(--brand-soft)] text-[var(--brand)]" : st === "done" ? "bg-white/[0.05] text-[var(--ink-2)]" : "text-[var(--faint)]"}`}>
-                  {st === "done" ? "✓" : st === "run" ? <span className="h-2.5 w-2.5 rounded-full border-2 border-[var(--brand)]/30 border-t-[var(--brand)] spin" /> : "·"} {a.name}
-                </li>
-              );
-            })}
-          </ol>
-        </div>
-      </div>
-
-      {run.done && (
-        <div className="rise flex flex-col gap-3 border-t border-[var(--rule)] bg-[var(--sheet-2)] px-5 py-4 md:flex-row md:items-center md:justify-between md:px-6">
-          <div className="flex flex-col">
-            <span className="text-[13.5px] font-medium">
-              {decision === "greenlit" ? `${idea.title} is in development.` : decision === "parked" ? `${idea.title} is parked on the idea board.` : "Gate 1: move it into development?"}
-            </span>
-            <span className="text-[12.5px] muted">
-              {decision === "greenlit"
-                ? "The four Develop agents have started on the Story Bible."
-                : decision
-                  ? "Nothing else runs until someone picks it up."
-                  : canSign
-                    ? "Agents never pick the winner. The producer or writer decides."
-                    : `Only the producer or writer can decide. You're viewing as the ${roleById(role).label}.`}
-            </span>
-          </div>
-          {!decision ? (
-            <div className="flex shrink-0 gap-2">
-              <button className="btn" disabled={!canSign} onClick={() => (setDecision("parked"), log("parked idea", idea.title))}>
-                Park
-              </button>
-              <button
-                className="btn btn-primary"
-                disabled={!canSign}
-                onClick={() => {
-                  setDecision("greenlit");
-                  log("greenlit", `${idea.title} (Gate 1)`);
-                  notify(`${idea.title} greenlit. The Develop agents have started.`);
-                }}
-              >
-                Greenlight
-              </button>
-            </div>
-          ) : (
-            <Link href={decision === "greenlit" ? "/stages/develop" : "/stages/ideate"} className="btn shrink-0">
-              {decision === "greenlit" ? "Open Story Room" : "Open idea board"}
-            </Link>
-          )}
-        </div>
-      )}
-    </article>
-  );
-}
-
-function Fact({ k, v }: { k: string; v: ReactNode }) {
-  return (
-    <div className="flex flex-col gap-0.5">
-      <dt className="text-[12px] muted">{k}</dt>
-      <dd className="min-h-[20px] font-medium">{v || <span className="inline-block h-3 w-20 rounded bg-white/[0.06]" />}</dd>
-    </div>
-  );
-}
