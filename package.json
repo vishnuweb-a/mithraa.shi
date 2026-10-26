@@ -10,7 +10,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "db:test": "supabase test db --local",
     "db:types": "supabase gen types typescript --local --schema public > lib/supabase/database.types.ts",
-    "test:unit": "node --test lib/auth/redirect.test.ts lib/auth/messages.test.ts",
+    "test:unit": "node --test lib/auth/redirect.test.ts lib/auth/messages.test.ts lib/ai/agents.test.ts",
     "test:e2e": "playwright test"
   },
   "dependencies": {
