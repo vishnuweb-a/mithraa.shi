@@ -10,7 +10,7 @@ export const LIVE_AGENTS: ReadonlyArray<{ key: AgentKey; name: string }> = [
   { key: "ip_scout", name: "IP Scout" },
 ];
 
-type StepStatus = "queued" | "running" | "completed" | "failed" | "cancelled" | "pending_retry";
+type StepStatus = "queued" | "running" | "completed" | "failed" | "skipped";
 export type HomeStep = {
   id: string;
   agent_key: AgentKey;
@@ -64,6 +64,7 @@ export function useHomeRun() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lock = useRef(false);
+  const pendingIdea = useRef<{ fingerprint: string; ideaId: string } | null>(null);
 
   const refresh = useCallback(async (id: string) => {
     const next = await api<HomeProgress>(`/api/home/runs/${id}`);
@@ -77,7 +78,7 @@ export function useHomeRun() {
   }, []);
 
   useEffect(() => {
-    if (!runId) return;
+    if (!runId || (progress && TERMINAL.has(progress.run.status))) return;
     let alive = true;
     const read = async () => {
       try { await refresh(runId); }
@@ -92,17 +93,22 @@ export function useHomeRun() {
     void read();
     const timer = window.setInterval(() => { if (alive && !lock.current) void read(); }, 4000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [runId, refresh]);
+  }, [runId, refresh, progress?.run.status]);
 
   const start = useCallback(async (idea: HomeIdea) => {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError(null);
     try {
-      const created = await api<{ ideaId: string }>("/api/home/ideas", post(idea));
+      const fingerprint = JSON.stringify(idea);
+      const cached = pendingIdea.current;
+      const ideaId = cached?.fingerprint === fingerprint ? cached.ideaId :
+        (await api<{ ideaId: string }>("/api/home/ideas", post(idea))).ideaId;
+      pendingIdea.current = { fingerprint, ideaId };
       const queued = await api<{ runId: string }>(
-        `/api/home/ideas/${created.ideaId}/runs`,
+        `/api/home/ideas/${ideaId}/runs`,
         post({ idempotencyKey: crypto.randomUUID(), mode: "budget_first" }),
       );
+      pendingIdea.current = null;
       sessionStorage.setItem(KEY, queued.runId);
       setProgress(null); setRunId(queued.runId);
       await refresh(queued.runId);
