@@ -43,15 +43,16 @@ The execution endpoints are not automatically invoked by a deployment. The Home 
 - A browser disconnect does not ensure model-side cancellation. The DB token prevents late results from replacing a newer claim, but a Groq request completed immediately before a crash can still be charged again.
 - After a retryable failure, \`GET\` exposes \`next_attempt_at\`; a later owner-initiated \`advance\` is needed to resume. **No cron/scheduler is included. A run will NOT automatically complete while its owner is offline.**
 - All error messages returned from the public API are stable, sanitized codes. The worker never persists full Groq/provider error details, user prompts as log entries or service-role credentials.
+- **Usage is not a full spending ledger**: `agent_usage` only stores successfully committed steps. Cancelled, rejected/invalid model output, interrupted requests and lost leases can incur real Groq token charges without corresponding persisted usage. Do not report these rows as total provider spend or deduct customer credits based solely on them. A separate provider-side billing/reconciliation design is needed before charging users.
 - Source URL being present in model search output is provenance evidence, **not** independent claim verification.
 - The DB snapshot used by an agent includes the immutable idea text/version. Format/language/style are read from the owner-scoped draft row; Phase 1C.4 must avoid editing those options mid-run until they're also snapshotted.
 
 ## Staging validation required
 
-1. Deploy to an isolated staging environment/preview only after security review, with server-only credentials and explicit execution opt-in.
+1. Create a **separate staging Supabase project** and deploy the migration history there; configure an isolated Preview/staging deployment with that project's own URL, publishable key, service_role JWT, users and auth redirect URLs. A Vercel Preview URL connected to the production Supabase project is **not isolation**. Use a dedicated staging Groq budget and explicit execution opt-in only after security review. Verify all three keys point to the intended staging stack before any real request.
 2. Check Supabase linked project and RLS, cross-account 404s, 10-runs/24h limit, duplicate idempotency, bad origins, and concurrent \`advance\` calls.
 3. Using an approved staging Groq budget, run one Idea Capture to verify strict JSON schemas and a Market Scout to verify \`browser_search\` plus \`tool_choice: required\`. Provider capability is **not yet confirmed with a live key**.
-4. Confirm owner cancellation, next-attempt backoff, provider 429, schema validation failures, lease expiry, and that usage rows are not duplicated.
+4. Confirm owner cancellation, next-attempt backoff, provider 429, schema validation failures, lease expiry, and that successful-step usage rows are not duplicated. Validate that invalid model pins submitted directly via the authenticated Supabase queue RPC are rejected before provider calls (terminal failure, not retry loops).
 5. Keep production \`HOME_GROQ_EXECUTION_ENABLED=false\` until subsequent sign-off.
 
 No production release, model call, database push, or merge may be performed automatically from this PR.
