@@ -21,7 +21,7 @@ reset role;
 select set_config('request.jwt.claims',
   '{"sub":"fa000000-0000-0000-0000-000000000001","role":"authenticated","is_anonymous":true}', true);
 set local role authenticated;
-select throws_ok($select public.create_idea_draft('Anonymous session')$,
+select throws_ok($$select public.create_idea_draft('Anonymous session')$$,
   '42501', null, 'anonymous authenticated JWT cannot create an idea');
 reset role;
 
@@ -122,9 +122,9 @@ select is((select idea_version from public.agent_runs where id = current_setting
 reset role;
 set local role service_role;
 -- service_role may bypass RLS: trigger must still reject historical rewrites.
-select throws_ok($update public.idea_versions set original_text = 'tampered'$,
+select throws_ok($$update public.idea_versions set original_text = 'tampered'$$,
   '42501', null, 'trusted worker cannot alter historical versions');
-select throws_ok($delete from public.idea_versions$,
+select throws_ok($$delete from public.idea_versions$$,
   '42501', null, 'trusted worker cannot directly delete historical versions');
 
 -- PostgreSQL triggers, not a worker's discipline, own updated_at.
