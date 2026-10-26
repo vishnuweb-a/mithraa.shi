@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentKey } from "@/lib/ai/contracts";
-import { TERMINAL_RUN_STATUSES, idleAdvanceMessage } from "./runControls";
+import { TERMINAL_RUN_STATUSES, idleAdvanceMessage, cancelErrorMessage } from "./runControls";
 import type { HomeProgress, HomeIdea, AgentOutputs } from "./home-run-types";
 export type { HomeProgress, HomeIdea, HomeStep, HomeRun } from "./home-run-types";
 
@@ -132,7 +132,7 @@ export function useHomeRun() {
       const original = e instanceof Error ? e.message : "Unable to cancel run";
       try {
         const after = await refresh(runId);
-        setError(TERMINAL_RUN_STATUSES.has(after.run.status) ? null : original);
+        setError(cancelErrorMessage(original, after));
       } catch { setError(original); }
     } finally { lock.current = false; setBusy(false); }
   }, [runId, terminal, refresh]);
