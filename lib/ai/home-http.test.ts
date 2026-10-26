@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  HomeRequestError, executionIsEnabled, parseQueueOptions, readJsonObject,
+  HomeRequestError, executionIsEnabled, approvedHomeTestUser, parseQueueOptions, readJsonObject,
   requireSameOrigin, requireUuid,
 } from "./home-http.ts";
 
@@ -77,4 +77,15 @@ test("run IDs are constrained to UUIDs before any privileged lookups", () => {
   assert.equal(requireUuid("f3000000-0000-4000-8000-000000000001"), "f3000000-0000-4000-8000-000000000001");
   assert.throws(() => requireUuid("../other-user"), HomeRequestError);
   assert.throws(() => requireUuid("not-a-uuid"), HomeRequestError);
+});
+
+test("only a named production acceptance user can trigger billable execution", () => {
+  const userId = "f3000000-0000-4000-8000-000000000002";
+  const env = { HOME_GROQ_TEST_USER_ID: userId } as unknown as NodeJS.ProcessEnv;
+  assert.equal(approvedHomeTestUser(userId, env), true);
+  assert.equal(approvedHomeTestUser("f3000000-0000-4000-8000-000000000003", env), false);
+  assert.equal(approvedHomeTestUser(userId, {} as NodeJS.ProcessEnv), false);
+  assert.equal(approvedHomeTestUser(userId, {
+    HOME_GROQ_TEST_USER_ID: "not-a-uuid",
+  } as unknown as NodeJS.ProcessEnv), false);
 });
