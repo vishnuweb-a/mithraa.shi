@@ -1,6 +1,7 @@
+import "server-only";
 import { createClient as createServiceClient, type SupabaseClient } from "@supabase/supabase-js";
 import { createClient as createSessionClient } from "@/lib/supabase/server";
-import { HomeRequestError } from "./home-http.ts";
+import { HomeRequestError, executionIsEnabled } from "./home-http.ts";
 
 /**
  * The checked-in generated DB types predate Phase 1C.1.
@@ -19,7 +20,7 @@ export function createWorkerClient(): SupabaseClient {
   if (typeof window !== "undefined") throw new Error("Worker credential is server-only");
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new HomeRequestError(503, "worker_not_configured");
+  if (!url?.trim() || !key?.trim()) throw new HomeRequestError(503, "worker_not_configured");
   return createServiceClient(url, key, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
     global: { headers: { "X-Client-Info": "mithraa-home-runner" } },
@@ -30,7 +31,8 @@ export function requireHomeExecution(): void {
   if (process.env.HOME_GROQ_EXECUTION_ENABLED !== "true") {
     throw new HomeRequestError(503, "agent_execution_disabled");
   }
-  if (!process.env.GROQ_API_KEY || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // Exactly the same trimmed-secret gate used by the unit tests.
+  if (!executionIsEnabled()) {
     throw new HomeRequestError(503, "agent_execution_not_configured");
   }
 }
