@@ -15,6 +15,12 @@ export function runControls(progress: HomeProgress | null, busy: boolean, now = 
     canAdvance: Boolean(progress && !terminal && !busy && (!waiting || cancelled)) };
 }
 
+/** Countdown label: whole minutes until the final minute, then seconds. Never negative. */
+export function retryRemaining(ms: number): string {
+  const remaining = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  return remaining >= 60_000 ? `${Math.ceil(remaining / 60_000)} min` : `${Math.ceil(remaining / 1_000)} sec`;
+}
+
 /** An idle claim can also mean successful cancellation or terminal cleanup. */
 export function idleAdvanceMessage(state: string, after: HomeProgress): string | null {
   if (state !== "idle" || TERMINAL_RUN_STATUSES.has(after.run.status)) return null;

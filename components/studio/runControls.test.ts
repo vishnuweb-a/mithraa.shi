@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runControls, idleAdvanceMessage, cancelErrorMessage } from "./runControls.ts";
+import { runControls, idleAdvanceMessage, cancelErrorMessage, retryRemaining } from "./runControls.ts";
 import type { HomeProgress, HomeStep } from "./home-run-types.ts";
 
 const step = (status: HomeStep["status"], error_code: string | null = null): HomeStep =>
@@ -68,4 +68,26 @@ test("cancel response lost but cancel request persisted is not an error", () => 
 });
 test("failed cancel with no recorded request preserves error", () => {
   assert.equal(cancelErrorMessage("request failed", run("running", [step("queued")])), "request failed");
+});
+
+test("retry countdown switches from minutes to seconds in the final minute and never goes negative", () => {
+  const cases: [number, string][] = [[120000, "2 min"], [90000, "2 min"], [60000, "1 min"], [59999, "60 sec"],
+    [30000, "30 sec"], [5000, "5 sec"], [1000, "1 sec"], [1, "1 sec"], [0, "0 sec"], [-1000, "0 sec"], [NaN, "0 sec"]];
+  for (const [ms, label] of cases) assert.equal(retryRemaining(ms), label, `${ms} ms`);
+});
+test("retry countdown decreases and unblocks Continue exactly at the deadline", () => {
+  const deadline = Date.parse("2026-10-26T10:01:30Z");
+  const p = run("running", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:30Z" }]);
+  const at = (msLeft: number) => runControls(p, false, deadline - msLeft);
+  assert.equal(retryRemaining(at(90000).retryAt! - (deadline - 90000)), "2 min");
+  assert.equal(retryRemaining(at(45000).retryAt! - (deadline - 45000)), "45 sec");
+  assert.equal(at(1).waiting, true);
+  assert.equal(at(1).canAdvance, false);
+  assert.equal(at(0).waiting, false);
+  assert.equal(at(0).canAdvance, true);
+  assert.equal(at(-1000).canAdvance, true);
+});
+test("terminal run cannot execute another agent even after a retry deadline", () => {
+  const p = run("failed", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:00Z" }]);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:02:00Z")).canAdvance, false);
 });
