@@ -123,14 +123,19 @@ export function useHomeRun() {
   }, [runId, terminal, refresh]);
 
   const cancel = useCallback(async () => {
-    if (!runId || lock.current || (progress && TERMINAL_RUN_STATUSES.has(progress.run.status))) return;
+    if (!runId || lock.current || terminal) return;
     lock.current = true; setBusy(true); setError(null);
     try {
       await api(`/api/home/runs/${runId}/cancel`, post());
       await refresh(runId);
-    } catch (e) { setError(e instanceof Error ? e.message : "Unable to cancel run"); }
-    finally { lock.current = false; setBusy(false); }
-  }, [runId, progress, refresh]);
+    } catch (e) {
+      const original = e instanceof Error ? e.message : "Unable to cancel run";
+      try {
+        const after = await refresh(runId);
+        setError(TERMINAL_RUN_STATUSES.has(after.run.status) ? null : original);
+      } catch { setError(original); }
+    } finally { lock.current = false; setBusy(false); }
+  }, [runId, terminal, refresh]);
 
   const reset = useCallback(() => {
     if (lock.current) return;
