@@ -3,20 +3,18 @@
 import { AiTag } from "@/components/ui";
 import { LIVE_AGENTS, outputFor } from "./useHomeRun";
 import type { useHomeRun } from "./useHomeRun";
+import { runControls } from "./runControls";
 
 type Controller = ReturnType<typeof useHomeRun>;
 
 export function LiveRunCard({ controller }: { controller: Controller }) {
-  const { progress, busy, error, runId, terminal, advance, cancel, reset } = controller;
+  const { progress, busy, error, terminal, advance, cancel, reset } = controller;
   const idea = outputFor(progress, "idea_capture");
   const market = outputFor(progress, "market_scout");
   const score = outputFor(progress, "premise_scorer");
   const ip = outputFor(progress, "ip_scout");
   const completed = progress?.steps.filter(s => s.status === "completed").length ?? 0;
-  const next = progress?.steps.find(s => s.status !== "completed" && s.status !== "skipped" && s.status !== "failed");
-  const waiting = next?.status === "queued" && Boolean(next.error_code);
-  const cancelled = Boolean(progress?.run.cancel_requested_at);
-  const canAdvance = Boolean(runId && progress && !terminal && !busy && next);
+  const { next, waiting, cancelled, canAdvance } = runControls(progress, busy);
   const title = idea?.title ?? "Your idea is queued";
 
   return (
