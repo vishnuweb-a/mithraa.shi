@@ -14,8 +14,7 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
   const ip = outputFor(progress, "ip_scout");
   const completed = progress?.steps.filter(s => s.status === "completed").length ?? 0;
   const next = progress?.steps.find(s => s.status !== "completed" && s.status !== "cancelled" && s.status !== "failed");
-  const retryAt = next?.next_attempt_at ? Date.parse(next.next_attempt_at) : NaN;
-  const waiting = Number.isFinite(retryAt) && retryAt > Date.now();
+  const waiting = next?.status === "pending_retry" || next?.status === "retry_wait";
   const cancelled = Boolean(progress?.run.cancel_requested_at);
   const canAdvance = Boolean(runId && progress && !terminal && !cancelled && !busy && !waiting &&
     next && next.status !== "running");
