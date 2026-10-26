@@ -93,6 +93,28 @@ test("Market Scout allows an evidence URL only when present in the returned rese
   assert.equal(data.insights[0].evidenceStatus, "sourced");
 });
 
+test("a domain or truncated URL cannot impersonate a full source page", () => {
+  const evidence = "Search found https://www.imdb.com/title/tt0123456/ and https://site.com/report";
+  for (const wrongUrl of [
+    "https://www.imdb.com",
+    "https://www.imdb.com/title",
+    "https://site.com/rep",
+  ]) {
+    assert.throws(() => validateOutput("market_scout", {
+      ...market, insights: [{ claim: "Unsupported claim", sourceUrl: wrongUrl, evidenceStatus: "sourced" }],
+    }, evidence), AgentValidationError, wrongUrl);
+  }
+});
+
+test("extracting complete URLs accepts legitimate source pages with surrounding punctuation", () => {
+  const exact = "https://example.test/research?year=2026";
+  const data = validateOutput("market_scout", {
+    ...market,
+    insights: [{ claim: "A specific research report exists", sourceUrl: exact, evidenceStatus: "sourced" }],
+  }, "See (" + exact + "). Further research is needed.");
+  assert.equal(data.insights[0].sourceUrl, exact);
+});
+
 test("the IP agent may never grant legal clearance", () => {
   assert.throws(() => validateOutput("ip_scout", {
     ...ip, legalClearanceGranted: true,
@@ -190,4 +212,87 @@ test("Groq does not attempt requests when the server API key is missing", async 
   } });
   await assert.rejects(provider.research({ model: "openai/gpt-oss-20b", query: "Test" }), ProviderRequestError);
   assert.equal(invoked, false);
+});
+
+test("Groq preserves a safe JSON-validation failure code without leaking the error body", async () => {
+  const provider = new GroqProvider({
+    apiKey: "fake-secret",
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: {
+        code: "json_validate_failed",
+        message: "Secret prompt material fake-secret and private user data",
+      },
+    }), { status: 400 }),
+  });
+  await assert.rejects(provider.research({ model: "openai/gpt-oss-20b", query: "Test" }), (err: unknown) => {
+    assert.ok(err instanceof ProviderRequestError);
+    assert.equal(err.status, 400);
+    assert.equal(err.providerCode, "json_validate_failed");
+    assert.equal(err.message, "Groq request rejected");
+    assert.ok(!JSON.stringify({ message: err.message, providerCode: err.providerCode }).includes("fake-secret"));
+    return true;
+  });
+});
+
+test("Groq rejects unsafe provider error codes instead of echoing provider messages", async () => {
+  const provider = new GroqProvider({
+    apiKey: "fake-secret",
+    fetchImpl: async () => new Response(JSON.stringify({
+      error: { code: "invalid request fake-secret", message: "Internal trace" },
+    }), { status: 400 }),
+  });
+  await assert.rejects(provider.research({ model: "openai/gpt-oss-20b", query: "Test" }), (err: unknown) => {
+    assert.ok(err instanceof ProviderRequestError);
+    assert.equal(err.providerCode, null);
+    assert.equal(err.message, "Groq request rejected");
+    return true;
+  });
+});
+
+test("user cancellation while downloading the response body is reported as cancellation", async () => {
+  const controller = new AbortController();
+  const provider = new GroqProvider({
+    apiKey: "fake-secret",
+    fetchImpl: async () => {
+      const response = new Response('{"choices":[]}', { status: 200 });
+      Object.defineProperty(response, "text", {
+        value: async () => {
+          controller.abort();
+          throw new DOMException("aborted", "AbortError");
+        },
+      });
+      return response;
+    },
+  });
+  await assert.rejects(provider.research({
+    model: "openai/gpt-oss-20b", query: "Test", signal: controller.signal,
+  }), (err: unknown) => {
+    assert.ok(err instanceof ProviderRequestError);
+    assert.equal(err.message, "Groq request cancelled");
+    return true;
+  });
+});
+
+test("user cancellation while downloading a 400 error body is also reported as cancellation", async () => {
+  const controller = new AbortController();
+  const provider = new GroqProvider({
+    apiKey: "fake-secret",
+    fetchImpl: async () => {
+      const response = new Response('{"error":{}}', { status: 400 });
+      Object.defineProperty(response, "text", {
+        value: async () => {
+          controller.abort();
+          throw new DOMException("aborted", "AbortError");
+        },
+      });
+      return response;
+    },
+  });
+  await assert.rejects(provider.research({
+    model: "openai/gpt-oss-20b", query: "Test", signal: controller.signal,
+  }), (err: unknown) => {
+    assert.ok(err instanceof ProviderRequestError);
+    assert.equal(err.message, "Groq request cancelled");
+    return true;
+  });
 });
