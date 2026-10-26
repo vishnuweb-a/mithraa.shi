@@ -19,7 +19,7 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
   const { next, waiting, retryAt, cancelled, canAdvance } = runControls(progress, busy, now);
   useEffect(() => {
     if (retryAt === null || retryAt <= now) return;
-    let id: ReturnType<typeof setInterval> | undefined;
+    let id: number | undefined;
     const update = () => {
       const current = Date.now();
       setNow(current);
