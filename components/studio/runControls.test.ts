@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runControls, idleAdvanceMessage } from "./runControls.ts";
+import { runControls, idleAdvanceMessage, cancelErrorMessage } from "./runControls.ts";
 import type { HomeProgress, HomeStep } from "./home-run-types.ts";
 
 const step = (status: HomeStep["status"], error_code: string | null = null): HomeStep =>
@@ -55,4 +55,14 @@ test("idle terminal cleanup and exhausted steps do not display retry guidance", 
 
 test("all failed steps in running run permit server finalization", () => {
   assert.equal(runControls(run("running", [step("failed")]), false).canAdvance, true);
+});
+
+test("cancel response lost but run already terminal is not an error", () => {
+  assert.equal(cancelErrorMessage("request failed", run("completed", [step("completed")])), null);
+});
+test("cancel response lost but cancel request persisted is not an error", () => {
+  assert.equal(cancelErrorMessage("request failed", run("running", [step("queued")], true)), null);
+});
+test("failed cancel with no recorded request preserves error", () => {
+  assert.equal(cancelErrorMessage("request failed", run("running", [step("queued")])), "request failed");
 });
