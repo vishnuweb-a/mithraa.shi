@@ -373,4 +373,45 @@ check "concurrent same-key queue creates only one run and four steps" \
              (select count(*) from public.agent_steps s join public.agent_runs r on r.id = s.run_id where r.idea_id = '$idea_id')")" \
   1/4
 
+# 14. Two trusted workers compete for the same run. Only one may lease
+# a step, even while the first worker's transaction holds the parent run lock.
+as_worker() { echo "begin; select set_config('request.jwt.claims','{\"role\":\"service_role\"}',true) \\g /dev/null
+set local role service_role;"; }
+lease_idea=$(q <<EOF
+$(as_user "$A")
+select public.create_idea_draft('Lease race between two workers') \gset
+commit;
+select :'create_idea_draft';
+EOF
+)
+lease_run=$(q <<EOF
+$(as_user "$A")
+select public.queue_idea_agent_run('$lease_idea','worker-race-leases-20261026') \gset
+commit;
+select :'queue_idea_agent_run';
+EOF
+)
+first_lease_file=$(mktemp)
+{ q <<EOF >"$first_lease_file"
+$(as_worker)
+select step_id from public.claim_home_agent_step('$lease_run');
+select pg_sleep(2) \g /dev/null
+commit;
+EOF
+} & sleep 1
+second_lease_count=$(q <<EOF
+$(as_worker)
+select count(*) from public.claim_home_agent_step('$lease_run');
+commit;
+EOF
+)
+wait
+first_lease=$(cat "$first_lease_file")
+rm -f "$first_lease_file"
+check "concurrent workers cannot both claim one run" \
+  "$second_lease_count/$(q <<< "select count(*) from public.agent_steps where run_id = '$lease_run' and status = 'running'")/$(q <<< "select sum(attempts) from public.agent_steps where run_id = '$lease_run'")" \
+  0/1/1
+check "winning worker receives a real step UUID" \
+  "$(q <<< "select exists (select 1 from public.agent_steps where id = '$first_lease' and run_id = '$lease_run')")" t
+
 exit $fail
