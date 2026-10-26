@@ -69,6 +69,19 @@ function httpsUrl(value: string): boolean {
   } catch { return false; }
 }
 
+/**
+ * Extract whole HTTPS URLs from untrusted search evidence. Substring checks are
+ * unsafe: https://example.com is a prefix of https://example.com/report.
+ * Trim punctuation outside links, but never truncate a path to make it match.
+ * A URL's presence is provenance only, NOT independent claim verification.
+ */
+function evidenceUrls(evidence: string): Set<string> {
+  const found = evidence.match(/https:\/\/[^\s)\]>"']+/g) ?? [];
+  return new Set(found
+    .map((value) => value.replace(/[.,;!?]+$/, ""))
+    .filter(httpsUrl));
+}
+
 /** Validate model output at runtime even if the provider claims strict JSON. */
 export function validateOutput<K extends AgentKey>(
   key: K, raw: unknown, researchEvidence = "",
@@ -89,6 +102,7 @@ export function validateOutput<K extends AgentKey>(
   }
 
   if (key === "market_scout") {
+    const urls = evidenceUrls(researchEvidence);
     const insights: MarketInsight[] = array(obj.insights, "insights").map((value) => {
       const item = record(value, "market insight");
       const claim = string(item.claim, "claim", 750);
@@ -98,7 +112,7 @@ export function validateOutput<K extends AgentKey>(
         throw new AgentValidationError("Unsupported evidence status");
       }
       if (sourceUrl !== null && !httpsUrl(sourceUrl)) throw new AgentValidationError("Invalid evidence URL");
-      if (evidenceStatus === "sourced" && (!sourceUrl || !researchEvidence.includes(sourceUrl))) {
+      if (evidenceStatus === "sourced" && (!sourceUrl || !urls.has(sourceUrl))) {
         throw new AgentValidationError("Sourced market claim lacks a URL present in retrieved evidence");
       }
       return { claim, sourceUrl, evidenceStatus };
