@@ -63,8 +63,8 @@ test("malformed and unsupported JSON requests are rejected", async () => {
 });
 
 test("execution gate is default-off and requires both private keys", () => {
-  const valid = { HOME_GROQ_EXECUTION_ENABLED: "true", GROQ_API_KEY: "key", SUPABASE_SERVICE_ROLE_KEY: "secret" } as NodeJS.ProcessEnv;
-  assert.equal(executionIsEnabled({}), false);
+  const valid = { HOME_GROQ_EXECUTION_ENABLED: "true", GROQ_API_KEY: "key", SUPABASE_SERVICE_ROLE_KEY: "secret" } as unknown as NodeJS.ProcessEnv;
+  assert.equal(executionIsEnabled({} as NodeJS.ProcessEnv), false);
   assert.equal(executionIsEnabled({ ...valid, HOME_GROQ_EXECUTION_ENABLED: "false" }), false);
   assert.equal(executionIsEnabled({ ...valid, GROQ_API_KEY: "" }), false);
   assert.equal(executionIsEnabled({ ...valid, SUPABASE_SERVICE_ROLE_KEY: "" }), false);
