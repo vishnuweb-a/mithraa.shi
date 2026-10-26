@@ -65,6 +65,7 @@ export function useHomeRun() {
   const [error, setError] = useState<string | null>(null);
   const lock = useRef(false);
   const pendingIdea = useRef<{ fingerprint: string; ideaId: string } | null>(null);
+  const terminal = Boolean(progress && TERMINAL.has(progress.run.status));
 
   const refresh = useCallback(async (id: string) => {
     const next = await api<HomeProgress>(`/api/home/runs/${id}`);
@@ -73,12 +74,18 @@ export function useHomeRun() {
   }, []);
 
   useEffect(() => {
-    const previous = sessionStorage.getItem(KEY);
-    if (previous && UUID.test(previous)) setRunId(previous);
+    let active = true;
+    // Restore after mount so server and hydration renders match.
+    void Promise.resolve().then(() => {
+      if (!active) return;
+      const previous = sessionStorage.getItem(KEY);
+      if (previous && UUID.test(previous)) setRunId(previous);
+    });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
-    if (!runId || (progress && TERMINAL.has(progress.run.status))) return;
+    if (!runId || terminal) return;
     let alive = true;
     const read = async () => {
       try { await refresh(runId); }
@@ -93,7 +100,7 @@ export function useHomeRun() {
     void read();
     const timer = window.setInterval(() => { if (alive && !lock.current) void read(); }, 4000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [runId, refresh, progress?.run.status]);
+  }, [runId, refresh, terminal]);
 
   const start = useCallback(async (idea: HomeIdea) => {
     if (lock.current) return;
@@ -145,5 +152,5 @@ export function useHomeRun() {
     setRunId(null); setProgress(null); setError(null);
   }, []);
 
-  return { runId, progress, busy, error, start, advance, cancel, reset, terminal: Boolean(progress && TERMINAL.has(progress.run.status)) };
+  return { runId, progress, busy, error, start, advance, cancel, reset, terminal };
 }
