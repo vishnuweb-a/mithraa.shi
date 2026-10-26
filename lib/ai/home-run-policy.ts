@@ -41,7 +41,10 @@ export function classifyAgentFailure(error: unknown): AgentFailure {
     return { code: "agent_validation", retryable: true, retryAfterSeconds: null };
   }
   if (error instanceof HomeRequestError) {
-    return { code: error.code, retryable: false, retryAfterSeconds: null };
+    // 5xx during preflight reads are recoverable. Deterministic 4xx
+    // (including invalid persisted model pins) must not retry.
+    return { code: error.code, retryable: error.status >= 500,
+      retryAfterSeconds: null };
   }
   return { code: "agent_unexpected_error", retryable: false, retryAfterSeconds: null };
 }
