@@ -26,7 +26,7 @@ The four Phase 1C.2 agents, output schemas, research constraints, and approved G
 
 ## Activation
 
-\`HOME_GROQ_EXECUTION_ENABLED=false\` by default. To enable real model requests **only after staging review**, the server needs:
+\`HOME_GROQ_EXECUTION_ENABLED=false\` by default. To enable real model requests **only after a controlled acceptance review**, the server needs:
 
 - \`HOME_GROQ_EXECUTION_ENABLED=true\`
 - \`GROQ_API_KEY\`: secret Groq key already used by the merged adapter
@@ -47,15 +47,22 @@ The execution endpoints are not automatically invoked by a deployment. The Home 
 - Source URL being present in model search output is provenance evidence, **not** independent claim verification.
 - The DB snapshot used by an agent includes the immutable idea text/version. Format/language/style are read from the owner-scoped draft row; Phase 1C.4 must avoid editing those options mid-run until they're also snapshotted.
 
-## Staging validation required
+## Acceptance plan — owner-selected production smoke test
 
-1. Create a **separate staging Supabase project** and deploy the migration history there; configure an isolated Preview/staging deployment with that project's own URL, publishable key, service_role JWT, users and auth redirect URLs. A Vercel Preview URL connected to the production Supabase project is **not isolation**. Use a dedicated staging Groq budget and explicit execution opt-in only after security review. Verify all three keys point to the intended staging stack before any real request.
-2. Check Supabase linked project and RLS, cross-account 404s, 10-runs/24h limit, duplicate idempotency, bad origins, and concurrent \`advance\` calls.
-3. Using an approved staging Groq budget, run one Idea Capture to verify strict JSON schemas and a Market Scout to verify \`browser_search\` plus \`tool_choice: required\`. Provider capability is **not yet confirmed with a live key**.
-4. Confirm owner cancellation, next-attempt backoff, provider 429, schema validation failures, lease expiry, and that successful-step usage rows are not duplicated. Validate that invalid model pins submitted directly via the authenticated Supabase queue RPC are rejected before provider calls (terminal failure, not retry loops).
-5. Keep production \`HOME_GROQ_EXECUTION_ENABLED=false\` until subsequent sign-off.
+An **isolated Supabase staging project is the recommended, lowest-risk** way to test. The owner has elected to test directly against the existing Production Supabase project after PR review and merge, without a second staging database. That is an explicit risk acceptance, not equivalent to isolated staging. Do not use a Vercel Preview connected to production Supabase as an alleged staging environment.
 
-No production release, model call, database push, or merge may be performed automatically from this PR.
+**Before any production opt-in:**
+
+1. Verify a recoverable production backup and confirm project identity/migration history. Keep a rollback plan: set \`HOME_GROQ_EXECUTION_ENABLED=false\` and redeploy/restore the previous deployment as needed. The flag stops **new** execution attempts, not provider calls already in flight.
+2. Keep real users out of the test: use a dedicated authenticated test user, synthetic story text only and a short, communicated maintenance/test window. Restrict who can queue or advance while the flag is on; do not use the public Home UI as an uncontrolled load driver.
+3. **Mandatory spend safeguard:** On a paid Groq organization, configure a low organization-wide monthly Spend Limit and alerts before enabling; see https://console.groq.com/docs/spend-limits. Groq Spend Limits require a paid account and owner access and can lag actual spending by 10–15 minutes. If this feature is unavailable, do not enable open access: use a dedicated project/key with strict rate limits, manually limit test callers and closely monitor https://console.groq.com/ usage. Per-user 10 runs/24 hours is NOT a global budget.
+4. Confirm \`HOME_GROQ_EXECUTION_ENABLED=false\` before and after the smoke test. On the production deployment, server-only \`GROQ_API_KEY\` and legacy \`SUPABASE_SERVICE_ROLE_KEY\` must match the intended production projects and must never enter client bundles, logs or version control.
+5. With execution initially off, verify that signed-out requests, a second user's run ID, malformed JSON/origins, invalid pins, and the enabled gate fail safely. Run full CI, the worker mock tests and a final security review.
+6. Explicitly turn execution on **only for the approved short production test window**. Start one new synthetic test idea and run **one Idea Capture step**. Check that real Groq structured JSON and the database lease/usage records work. Then run a limited Market Scout step to test \`browser_search\` and \`tool_choice: required\`; these provider capabilities have not yet been verified live.
+7. Check idempotency, retrying after a 429, cancellation, owner-only reads, live lease behavior and research source \`verified=false\`. An invalid model pin submitted directly to the queue RPC must terminate before any Groq request.
+8. Turn \`HOME_GROQ_EXECUTION_ENABLED=false\` back off, verify the deployment and stop test activity. Review the Groq Console **provider-side** usage/spend, not just \`agent_usage\`, and explicitly decide when a separate production-wide activation can be authorized.
+
+**Do not merge, deploy, turn on production Groq, apply database changes, or make real provider calls automatically from this PR.** This PR includes no DB migrations. An approved small-scope production smoke test is **not** the same as approval to make Groq generally available to all users.
 
 ## Scope boundary
 
