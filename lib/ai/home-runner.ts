@@ -4,7 +4,7 @@ import { validateOutput } from "./schemas.ts";
 import { runHomeAgent } from "./agents.ts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { translateDbError } from "./home-db-errors.ts";
-import { HomeRequestError, requireUuid } from "./home-http.ts";
+import { HomeRequestError, requireUuid, approvedHomeTestUser } from "./home-http.ts";
 import { classifyAgentFailure, marketSourceCandidates, storedRunRouting, type AgentFailure } from "./home-run-policy.ts";
 
 type Row = Record<string, unknown>;
@@ -49,6 +49,11 @@ export async function executeRunStep(
 }> {
   requireUuid(runId);
   requireUuid(ownerId);
+  // Defense in depth: even if an API route forgets its approval check,
+  // privileged DB reads and any potentially billable Groq calls remain blocked.
+  if (!approvedHomeTestUser(ownerId)) {
+    throw new HomeRequestError(403, "agent_execution_restricted");
+  }
   // Production obtains a server-only client; tests inject an in-memory fake,
   // allowing the full claim/preflight/Groq/finalize order to be exercised.
   const db = deps.db ?? (await import("./home-server.ts")).createWorkerClient();
