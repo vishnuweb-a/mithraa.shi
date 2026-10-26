@@ -1,4 +1,4 @@
-import { AgentValidationError, type AgentKey, type QualityTier, type RoutingMode } from "./contracts";
+import { AgentValidationError, type AgentKey, type QualityTier, type RoutingMode } from "./contracts.ts";
 
 /**
  * Provider-neutral SHI Router, first version. It only selects Groq models now;
