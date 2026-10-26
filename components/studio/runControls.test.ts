@@ -26,7 +26,7 @@ test("error code without a future retry time does not block Continue", () => {
 test("terminal, busy, and completed steps block execution", () => {
   assert.equal(runControls(run("completed", [step("completed")]), false).canAdvance, false);
   assert.equal(runControls(run("running", [step("queued")]), true).canAdvance, false);
-  assert.equal(runControls(run("running", [step("completed")]), false).canAdvance, false);
+  assert.equal(runControls(run("running", [step("completed")]), false).canAdvance, true);
 });
 
 test("future retry deadline blocks another model attempt until eligible", () => {
@@ -51,4 +51,8 @@ test("idle terminal cleanup and exhausted steps do not display retry guidance", 
   assert.equal(idleAdvanceMessage("idle", run("completed", [step("completed")])), null);
   assert.equal(idleAdvanceMessage("idle", run("running", [step("failed")])), null);
   assert.equal(idleAdvanceMessage("executed", run("running", [step("queued")])), null);
+});
+
+test("all failed steps in running run permit server finalization", () => {
+  assert.equal(runControls(run("running", [step("failed")]), false).canAdvance, true);
 });
