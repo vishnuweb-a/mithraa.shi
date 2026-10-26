@@ -106,6 +106,7 @@ test("valid pinned model is passed to Groq and persisted once under the leased t
     db: fx.db,
     runAgent: (async (_key, _input, opts) => {
       calls++;
+      assert.ok(opts);
       assert.equal(opts.mode, "pinned");
       assert.equal(opts.pinnedModel, model);
       return agentResult;
