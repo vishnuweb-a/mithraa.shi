@@ -11,8 +11,8 @@ export function runControls(progress: HomeProgress | null, busy: boolean, now = 
     ? Date.parse(next.next_attempt_at) : NaN;
   const waiting = Number.isFinite(retryAt) && retryAt > now;
   return { next, waiting, retryAt: Number.isFinite(retryAt) ? retryAt : null,
-    cancelled, terminal,
-    canAdvance: Boolean(progress && !terminal && !busy && next && (!waiting || cancelled)) };
+    cancelled,
+    canAdvance: Boolean(progress && !terminal && !busy && (!waiting || cancelled)) };
 }
 
 /** An idle claim can also mean successful cancellation or terminal cleanup. */
