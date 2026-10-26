@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentKey, AgentOutputs, IdeaInput } from "@/lib/ai/contracts";
+import type { AgentKey } from "@/lib/ai/contracts";
+import type { HomeProgress, HomeIdea, AgentOutputs } from "./home-run-types";
+export type { HomeProgress, HomeIdea, HomeStep, HomeRun } from "./home-run-types";
 
 export const LIVE_AGENTS: ReadonlyArray<{ key: AgentKey; name: string }> = [
   { key: "idea_capture", name: "Idea Capture" },
@@ -10,25 +12,6 @@ export const LIVE_AGENTS: ReadonlyArray<{ key: AgentKey; name: string }> = [
   { key: "ip_scout", name: "IP Scout" },
 ];
 
-type StepStatus = "queued" | "running" | "completed" | "failed" | "skipped";
-export type HomeStep = {
-  id: string;
-  agent_key: AgentKey;
-  status: StepStatus;
-  attempts: number;
-  output: unknown | null;
-  model: string | null;
-  error_code: string | null;
-  next_attempt_at: string | null;
-};
-export type HomeRun = {
-  id: string;
-  status: string;
-  cancel_requested_at: string | null;
-  finished_at: string | null;
-};
-export type HomeProgress = { run: HomeRun; steps: HomeStep[] };
-export type HomeIdea = IdeaInput & { sourceType: string; workingTitle?: string };
 const KEY = "mithraa.home.live-run.v1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TERMINAL = new Set(["completed", "partial", "failed", "cancelled"]);
@@ -64,7 +47,7 @@ export function useHomeRun() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lock = useRef(false);
-  const pendingIdea = useRef<{ fingerprint: string; ideaId: string } | null>(null);
+  const pendingIdea = useRef<{ fingerprint: string; ideaId: string; key: string } | null>(null);
   const terminal = Boolean(progress && TERMINAL.has(progress.run.status));
 
   const refresh = useCallback(async (id: string) => {
@@ -110,10 +93,11 @@ export function useHomeRun() {
       const cached = pendingIdea.current;
       const ideaId = cached?.fingerprint === fingerprint ? cached.ideaId :
         (await api<{ ideaId: string }>("/api/home/ideas", post(idea))).ideaId;
-      pendingIdea.current = { fingerprint, ideaId };
+      const key = cached?.fingerprint === fingerprint ? cached.key : crypto.randomUUID();
+      pendingIdea.current = { fingerprint, ideaId, key };
       const queued = await api<{ runId: string }>(
         `/api/home/ideas/${ideaId}/runs`,
-        post({ idempotencyKey: crypto.randomUUID(), mode: "budget_first" }),
+        post({ idempotencyKey: key, mode: "budget_first" }),
       );
       pendingIdea.current = null;
       sessionStorage.setItem(KEY, queued.runId);
