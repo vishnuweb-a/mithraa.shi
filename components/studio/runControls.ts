@@ -14,3 +14,10 @@ export function runControls(progress: HomeProgress | null, busy: boolean, now = 
     cancelled, terminal,
     canAdvance: Boolean(progress && !terminal && !busy && next && (!waiting || cancelled)) };
 }
+
+/** An idle claim can also mean successful cancellation or terminal cleanup. */
+export function idleAdvanceMessage(state: string, after: HomeProgress): string | null {
+  if (state !== "idle" || TERMINAL_RUN_STATUSES.has(after.run.status)) return null;
+  const stillQueued = after.steps.some(step => step.status === "queued" || step.status === "running");
+  return stillQueued ? "This step is not ready yet. Please try again shortly." : null;
+}
