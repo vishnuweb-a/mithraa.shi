@@ -1,16 +1,13 @@
-import {
-  AgentValidationError, AGENT_KEYS, type AgentExecution, type AgentKey, type IdeaInput,
-  type RoutingMode,
-} from "./contracts.ts";
+import "server-only";
+import { AGENT_KEYS, checkIdeaInput, AgentValidationError, type AgentExecution, type AgentKey, type IdeaInput } from "./contracts.ts";
 import { validateOutput } from "./schemas.ts";
 import { runHomeAgent } from "./agents.ts";
-import { ProviderRequestError } from "./providers/groq.ts";
 import { createWorkerClient, translateDbError } from "./home-server.ts";
 import { HomeRequestError, requireUuid } from "./home-http.ts";
+import { classifyAgentFailure, marketSourceCandidates, storedRunRouting, type AgentFailure } from "./home-run-policy.ts";
 
 type Row = Record<string, unknown>;
 type Lease = { step_id: string; claimed_run_id: string; agent_key: AgentKey; lease_token: string; attempt_number: number };
-type Failure = { code: string; retryable: boolean; retryAfterSeconds: number | null };
 
 function row(data: unknown): Row {
   if (!data || Array.isArray(data) || typeof data !== "object") {
@@ -35,65 +32,6 @@ function validateLease(value: unknown): Lease {
     lease_token: requireUuid(requiredText(r.lease_token)),
     attempt_number: typeof r.attempt_number === "number" ? r.attempt_number : 0,
   };
-}
-
-export function classifyAgentFailure(error: unknown): Failure {
-  if (error instanceof ProviderRequestError) {
-    if (error.status === 429) return {
-      code: "rate_limited", retryable: true, retryAfterSeconds: error.retryAfterSeconds,
-    };
-    if (error.providerCode === "json_validate_failed") return {
-      code: "json_validate_failed", retryable: true, retryAfterSeconds: null,
-    };
-    if (error.status !== null && (error.status >= 500 || error.status === 408 || error.status === 425)) {
-      return { code: "provider_unavailable", retryable: true, retryAfterSeconds: error.retryAfterSeconds };
-    }
-    if (error.message === "Groq request timed out" || error.message === "Groq network request failed" ||
-      error.message === "Groq request cancelled") {
-      return { code: "provider_transport", retryable: true, retryAfterSeconds: null };
-    }
-    if (error.status === 401 || error.status === 403) return {
-      code: "provider_auth", retryable: false, retryAfterSeconds: null,
-    };
-    return { code: "provider_rejected", retryable: false, retryAfterSeconds: null };
-  }
-  if (error instanceof AgentValidationError) {
-    // Malformed model JSON may be transient. Input validation errors are
-    // precluded by the stored-input check before the provider is called.
-    return { code: "agent_validation", retryable: true, retryAfterSeconds: null };
-  }
-  if (error instanceof HomeRequestError) {
-    return { code: error.code, retryable: false, retryAfterSeconds: null };
-  }
-  return { code: "agent_unexpected_error", retryable: false, retryAfterSeconds: null };
-}
-
-export function marketSourceCandidates(execution: AgentExecution): Array<{
-  url: string; title: string; claim: string;
-}> {
-  if (execution.key !== "market_scout") return [];
-  const result = validateOutput("market_scout", execution.output, execution.evidence ?? "");
-  const seen = new Set<string>();
-  return result.insights.flatMap((insight) => {
-    const url = insight.sourceUrl;
-    if (insight.evidenceStatus !== "sourced" || !url || seen.has(url)) return [];
-    seen.add(url);
-    return [{ url, title: "Referenced research source", claim: insight.claim.slice(0, 500) }];
-  }).slice(0, 20);
-}
-
-function storedMode(run: Row): { mode: RoutingMode; pinnedModel?: string } {
-  const mode = requiredText(run.model_mode);
-  if (!["auto", "budget_first", "quality_first", "pinned"].includes(mode)) {
-    throw new HomeRequestError(400, "unsupported_run_mode");
-  }
-  const opts = run.request_options;
-  const options = opts && typeof opts === "object" && !Array.isArray(opts) ? opts as Row : {};
-  const pinnedModel = options.pinnedModel;
-  if (mode === "pinned" && typeof pinnedModel !== "string") {
-    throw new HomeRequestError(400, "unsupported_run_mode");
-  }
-  return { mode: mode as RoutingMode, ...(typeof pinnedModel === "string" ? { pinnedModel } : {}) };
 }
 
 /**
@@ -126,7 +64,7 @@ export async function executeRunStep(runId: string, ownerId: string): Promise<{
   if (lease.claimed_run_id !== runId) throw new HomeRequestError(500, "worker_claim_mismatch");
 
   let result: AgentExecution | null = null;
-  let failure: Failure | null = null;
+  let failure: AgentFailure | null = null;
   try {
     const [{ data: draft, error: draftError }, { data: version, error: versionError }] = await Promise.all([
       db.from("idea_drafts")
@@ -146,7 +84,14 @@ export async function executeRunStep(runId: string, ownerId: string): Promise<{
       productionMode: requiredText(d.production_mode) as IdeaInput["productionMode"],
       qualityTier: requiredText(d.quality_tier) as IdeaInput["qualityTier"],
     };
-    const routing = storedMode(run);
+    // Do not retry invalid owner-written queue RPC options or corrupt inputs.
+    // These errors are deterministic and cannot be fixed by another Groq call.
+    try { checkIdeaInput(input); }
+    catch (error) {
+      if (error instanceof AgentValidationError) throw new HomeRequestError(400, "invalid_run_input");
+      throw error;
+    }
+    const routing = storedRunRouting(run);
     // Completed, validated Idea Capture output enriches subsequent agents.
     const { data: capture, error: captureError } = await db.from("agent_steps")
       .select("output,status").eq("run_id", runId).eq("agent_key", "idea_capture").maybeSingle();
