@@ -143,6 +143,9 @@ reset role;
 -- Another signed-in user must see nothing and cannot mutate either draft or run.
 select set_config('request.jwt.claims',
   '{"sub":"fa000000-0000-0000-0000-000000000002","role":"authenticated"}', true);
+-- After service_role testing, RESET ROLE restores the owner; re-enter
+-- authenticated or PostgreSQL's table owner would silently bypass RLS.
+set local role authenticated;
 select is((select count(*)::int from public.idea_drafts), 0,
   'other user cannot read drafts');
 select is((select count(*)::int from public.idea_versions), 0,
