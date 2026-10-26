@@ -23,7 +23,7 @@ test("error code without a future retry time does not block Continue", () => {
   assert.equal(result.waiting, false);
   assert.equal(result.canAdvance, true);
 });
-test("terminal, busy, and completed steps block execution", () => {
+test("terminal and busy runs block execution, unfinished finalization remains enabled", () => {
   assert.equal(runControls(run("completed", [step("completed")]), false).canAdvance, false);
   assert.equal(runControls(run("running", [step("queued")]), true).canAdvance, false);
   assert.equal(runControls(run("running", [step("completed")]), false).canAdvance, true);
@@ -44,8 +44,11 @@ test("cancellation finalization remains available even during retry cooldown", (
 test("idle after cancellation finalization does not produce a false error", () => {
   assert.equal(idleAdvanceMessage("idle", run("cancelled", [step("skipped")])), null);
 });
-test("idle while queued step is waiting displays guidance", () => {
-  assert.match(idleAdvanceMessage("idle", run("running", [step("queued")])) ?? "", /not ready/);
+test("idle with a running step displays guidance", () => {
+  assert.match(idleAdvanceMessage("idle", run("running", [step("running")])) ?? "", /not ready/);
+});
+test("idle after exhausted step does not claim the next queued step is blocked", () => {
+  assert.equal(idleAdvanceMessage("idle", run("running", [step("failed"), step("queued")])), null);
 });
 test("idle terminal cleanup and exhausted steps do not display retry guidance", () => {
   assert.equal(idleAdvanceMessage("idle", run("completed", [step("completed")])), null);
