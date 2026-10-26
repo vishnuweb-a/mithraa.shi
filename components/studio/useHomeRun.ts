@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentKey } from "@/lib/ai/contracts";
-import { TERMINAL_RUN_STATUSES } from "./runControls";
+import { TERMINAL_RUN_STATUSES, idleAdvanceMessage } from "./runControls";
 import type { HomeProgress, HomeIdea, AgentOutputs } from "./home-run-types";
 export type { HomeProgress, HomeIdea, HomeStep, HomeRun } from "./home-run-types";
 
@@ -108,18 +108,19 @@ export function useHomeRun() {
   }, [refresh]);
 
   const advance = useCallback(async () => {
-    if (!runId || lock.current || (progress && TERMINAL_RUN_STATUSES.has(progress.run.status))) return;
+    if (!runId || lock.current || terminal) return;
     lock.current = true; setBusy(true); setError(null);
     try {
       const response = await api<{ state: string }>(`/api/home/runs/${runId}/advance`, post());
-      if (response.state === "idle") setError("This step is not ready yet. Please try again shortly.");
-      // Always trust GET status, not 'advance' outcome: a concurrent cancel may have won.
-      await refresh(runId);
+      // GET is authoritative: an idle advance may have finalized cancellation.
+      const after = await refresh(runId);
+      const message = idleAdvanceMessage(response.state, after);
+      if (message) setError(message);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to advance run");
       try { await refresh(runId); } catch { /* preserve original error */ }
     } finally { lock.current = false; setBusy(false); }
-  }, [runId, progress, refresh]);
+  }, [runId, terminal, refresh]);
 
   const cancel = useCallback(async () => {
     if (!runId || lock.current || (progress && TERMINAL_RUN_STATUSES.has(progress.run.status))) return;
