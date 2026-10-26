@@ -1,8 +1,6 @@
 import { HomeRequestError, requireSameOrigin, requireUuid } from "@/lib/ai/home-http";
 import { jsonPrivate, requireHomeUser, respondHomeError, translateDbError } from "@/lib/ai/home-server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 /** Only the owner can request cancellation; the DB worker finalizes state. */
 export async function POST(request: Request, context: { params: Promise<{ runId: string }> }): Promise<Response> {
