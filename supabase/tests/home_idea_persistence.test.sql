@@ -2,7 +2,7 @@
 -- All checks use throwaway local Supabase in CI; no production access.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(45);
+select plan(46);
 
 insert into auth.users (id, email, raw_user_meta_data) values
  ('fa000000-0000-0000-0000-000000000001','home-a@example.test','{"display_name":"Home A"}'),
@@ -128,6 +128,11 @@ select throws_ok($$delete from public.idea_versions$$,
   '42501', null, 'trusted worker cannot directly delete historical versions');
 
 -- PostgreSQL triggers, not a worker's discipline, own updated_at.
+update public.idea_drafts set updated_at = '2000-01-01'::timestamptz
+  where id = current_setting('test.home_idea')::uuid;
+select ok((select updated_at > '2000-01-01'::timestamptz from public.idea_drafts
+    where id = current_setting('test.home_idea')::uuid),
+  'idea_drafts updated_at is maintained by trigger');
 update public.agent_runs set updated_at = '2000-01-01'::timestamptz
   where id = current_setting('test.home_run')::uuid;
 select ok((select updated_at > '2000-01-01'::timestamptz from public.agent_runs
