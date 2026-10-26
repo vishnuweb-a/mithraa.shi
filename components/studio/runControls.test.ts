@@ -18,7 +18,7 @@ test("cancel requested permits advance for database cancellation finalization", 
 test("running step permits a new claim attempt to recover expired lease", () => {
   assert.equal(runControls(run("running", [step("running")]), false).canAdvance, true);
 });
-test("queued step with error code indicates retry wait, without deadlocking Continue", () => {
+test("error code without a future retry time does not block Continue", () => {
   const result = runControls(run("running", [step("queued", "rate_limited")]), false);
   assert.equal(result.waiting, false);
   assert.equal(result.canAdvance, true);
