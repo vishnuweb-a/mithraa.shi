@@ -340,4 +340,37 @@ check "a mode change queued behind the producer's own removal is refused" \
       where project_id = '$pid' and action = 'project.mode_changed') from public.projects where id = '$pid'")/$(consistent "$pid")" \
   1/external/true/0/t
 
+# 13. Two authenticated sessions submit the same idea and idempotency key
+# concurrently. The advisory lock must serialize both calls and reuse one run.
+idea_id=$(q <<EOF
+$(as_user "$A")
+select public.create_idea_draft('Two requests should produce one run') \gset
+commit;
+select :'create_idea_draft';
+EOF
+)
+run_key='home-race-run-20261026-same-key'
+first_file=$(mktemp)
+{ q <<EOF >"$first_file"
+$(as_user "$A")
+select public.queue_idea_agent_run('$idea_id', '$run_key');
+select pg_sleep(2) \g /dev/null
+commit;
+EOF
+} & sleep 1
+second_id=$(q <<EOF
+$(as_user "$A")
+select public.queue_idea_agent_run('$idea_id', '$run_key');
+commit;
+EOF
+)
+wait
+first_id=$(cat "$first_file")
+rm -f "$first_file"
+check "concurrent same-key callers receive the same run id" "$first_id" "$second_id"
+check "concurrent same-key queue creates only one run and four steps" \
+  "$(q <<< "select (select count(*) from public.agent_runs where idea_id = '$idea_id' and idempotency_key = '$run_key') || '/' ||
+             (select count(*) from public.agent_steps s join public.agent_runs r on r.id = s.run_id where r.idea_id = '$idea_id')")" \
+  1/4
+
 exit $fail
