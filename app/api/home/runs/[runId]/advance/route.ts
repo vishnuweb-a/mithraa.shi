@@ -2,8 +2,6 @@ import { HomeRequestError, requireSameOrigin, requireUuid } from "@/lib/ai/home-
 import { jsonPrivate, requireHomeExecution, requireHomeUser, respondHomeError } from "@/lib/ai/home-server";
 import { executeRunStep } from "@/lib/ai/home-runner";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 /** One Market Scout step makes two 25-second Groq requests, plus DB I/O. */
 export const maxDuration = 60;
 
