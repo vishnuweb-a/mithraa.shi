@@ -20,6 +20,7 @@ function fixture(options: {
 } = {}) {
   const finished: Array<Record<string, unknown>> = [];
   const calls: string[] = [];
+  const runFilters: Array<[string, unknown]> = [];
   const storedRun = {
     id: runId, owner_id: ownerId, idea_id: ideaId, idea_version: 1,
     status: "queued", model_mode: options.mode ?? "pinned",
@@ -39,7 +40,10 @@ function fixture(options: {
       calls.push("read:" + table);
       const q = {
         select(_columns: string) { return q; },
-        eq(_col: string, _value: unknown) { return q; },
+        eq(col: string, value: unknown) {
+          if (table === "agent_runs") runFilters.push([col, value]);
+          return q;
+        },
         async single() {
           if (table === "idea_drafts" && options.preflightError) {
             return { data: null, error: { code: "PGRST116", message: "temporary failure" } };
@@ -66,7 +70,7 @@ function fixture(options: {
       throw Error("Unexpected RPC " + name);
     },
   };
-  return { db: db as unknown as SupabaseClient, calls, finished };
+  return { db: db as unknown as SupabaseClient, calls, finished, runFilters };
 }
 
 const agentResult: AgentExecution<"idea_capture"> = {
@@ -170,5 +174,7 @@ test("cross-owner lookups cannot reach the privileged claim operation", async ()
   const fx = fixture({ ownerFound: false });
   await assert.rejects(executeRunStep(runId, ownerId, { db: fx.db }), 
     (error: unknown) => error instanceof HomeRequestError && error.code === "run_not_found");
+  assert.deepEqual(fx.runFilters, [["id", runId], ["owner_id", ownerId]],
+    "The privileged run lookup must filter by both run ID and verified session owner ID");
   assert.equal(fx.calls.includes("rpc:claim_home_agent_step"), false);
 });
