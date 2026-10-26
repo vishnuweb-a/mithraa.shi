@@ -168,6 +168,8 @@ revoke truncate on public.idea_versions, public.agent_runs, public.agent_steps,
 -- from an idea/user remain possible (no delete trigger); direct worker DELETE denied.
 create trigger append_only before update on public.idea_versions
   for each row execute function private.forbid_change();
+create trigger touch_updated_at before update on public.idea_drafts
+  for each row execute function private.touch_updated_at();
 create trigger touch_updated_at before update on public.agent_runs
   for each row execute function private.touch_updated_at();
 create trigger touch_updated_at before update on public.agent_steps
@@ -229,8 +231,7 @@ begin
   -- Reruns are tied to immutable versions; a revision is allowed while an older version runs.
   v_next := v_draft.current_version + 1;
   update public.idea_drafts set original_text = p_original_text,
-    working_title = coalesce(p_working_title, v_draft.working_title), current_version = v_next, status = 'draft',
-    updated_at = now()
+    working_title = coalesce(p_working_title, v_draft.working_title), current_version = v_next, status = 'draft'
   where id = p_idea_id;
   insert into public.idea_versions
     (idea_id, owner_id, version_number, original_text, working_title, change_note)
@@ -249,8 +250,7 @@ begin
   if v_uid is null or coalesce((auth.jwt() ->> 'is_anonymous')::boolean,false) then
     raise exception 'Sign in to manage ideas' using errcode = '42501';
   end if;
-  update public.idea_drafts set status = case when p_parked then 'parked' else 'draft' end,
-    updated_at = now()
+  update public.idea_drafts set status = case when p_parked then 'parked' else 'draft' end
   where id = p_idea_id and owner_id = v_uid and status in ('draft','parked');
   if not found then
     raise exception 'Idea not found or locked' using errcode = '42501';
@@ -321,8 +321,7 @@ begin
   if v_uid is null or coalesce((auth.jwt() ->> 'is_anonymous')::boolean,false) then
     raise exception 'Sign in to cancel runs' using errcode = '42501';
   end if;
-  update public.agent_runs set cancel_requested_at = coalesce(cancel_requested_at, now()),
-    updated_at = now()
+  update public.agent_runs set cancel_requested_at = coalesce(cancel_requested_at, now())
   where id = p_run_id and owner_id = v_uid and status in ('queued','running');
   if not found then
     raise exception 'Run not found or already finished' using errcode = '42501';
