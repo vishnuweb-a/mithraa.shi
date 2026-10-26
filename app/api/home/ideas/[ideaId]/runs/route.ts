@@ -1,5 +1,5 @@
 import { HomeRequestError, parseQueueOptions, readJsonObject, requireSameOrigin, requireUuid } from "@/lib/ai/home-http";
-import { jsonPrivate, requireHomeExecution, requireHomeUser, respondHomeError, translateDbError } from "@/lib/ai/home-server";
+import { jsonPrivate, requireHomeExecution, requireHomeTestUser, requireHomeUser, respondHomeError, translateDbError } from "@/lib/ai/home-server";
 
 
 /** Queue an owner-scoped, idempotent run. This does not invoke Groq. */
@@ -8,6 +8,7 @@ export async function POST(request: Request, context: { params: Promise<{ ideaId
     requireSameOrigin(request);
     requireHomeExecution();
     const { userId, db } = await requireHomeUser();
+    requireHomeTestUser(userId);
     const ideaId = requireUuid((await context.params).ideaId);
     const options = parseQueueOptions(await readJsonObject(request, 3000));
     const { data: idea, error: ideaError } = await db.from("idea_drafts")
