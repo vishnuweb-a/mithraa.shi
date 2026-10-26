@@ -14,10 +14,9 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
   const ip = outputFor(progress, "ip_scout");
   const completed = progress?.steps.filter(s => s.status === "completed").length ?? 0;
   const next = progress?.steps.find(s => s.status !== "completed" && s.status !== "cancelled" && s.status !== "failed");
-  const waiting = next?.status === "pending_retry" || next?.status === "retry_wait";
+  const waiting = next?.status === "queued" && Boolean(next.error_code);
   const cancelled = Boolean(progress?.run.cancel_requested_at);
-  const canAdvance = Boolean(runId && progress && !terminal && !cancelled && !busy && !waiting &&
-    next && next.status !== "running");
+  const canAdvance = Boolean(runId && progress && !terminal && !busy && next);
   const title = idea?.title ?? "Your idea is queued";
 
   return (
@@ -92,7 +91,7 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
           {terminal && <button type="button" className="btn" onClick={reset}>New idea</button>}
           {!terminal && <button type="button" className="btn" onClick={() => void cancel()} disabled={busy || cancelled || !progress}>Cancel</button>}
           {!terminal && <button type="button" className="btn btn-primary" onClick={() => void advance()} disabled={!canAdvance}>
-            {busy ? "Processing…" : waiting ? "Waiting for retry" : "Continue next agent"}
+            {busy ? "Processing…" : cancelled ? "Finalize cancellation" : waiting ? "Check retry" : "Continue next agent"}
           </button>}
         </div>
       </div>
