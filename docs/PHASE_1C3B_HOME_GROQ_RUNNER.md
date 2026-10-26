@@ -32,7 +32,7 @@ The four Phase 1C.2 agents, output schemas, research constraints, and approved G
 - \`GROQ_API_KEY\`: secret Groq key already used by the merged adapter
 - \`SUPABASE_SERVICE_ROLE_KEY\`: **legacy service_role JWT**, not publishable/anon key, for the same Supabase project.
 
-All 3 values must be available only to the server. Never set \`NEXT_PUBLIC_\` for secrets, and never paste real keys into GitHub/CI/tests.
+All four settings (activation flag, Groq key, service-role JWT and HOME_GROQ_TEST_USER_ID) must be available only to the server. The approved test user UUID must match the signed-in user before queue or advance can run; when unset, paid execution is denied to everyone. Never set \`NEXT_PUBLIC_\` for secrets, and never paste real keys into GitHub/CI/tests.
 
 The execution endpoints are not automatically invoked by a deployment. The Home prototype still uses its existing deterministic workflow until Phase 1C.4 integrates this API.
 
@@ -54,7 +54,7 @@ An **isolated Supabase staging project is the recommended, lowest-risk** way to 
 **Before any production opt-in:**
 
 1. Verify a recoverable production backup and confirm project identity/migration history. Keep a rollback plan: set \`HOME_GROQ_EXECUTION_ENABLED=false\` and redeploy/restore the previous deployment as needed. The flag stops **new** execution attempts, not provider calls already in flight.
-2. Keep real users out of the test: use a dedicated authenticated test user, synthetic story text only and a short, communicated maintenance/test window. Restrict who can queue or advance while the flag is on; do not use the public Home UI as an uncontrolled load driver.
+2. Keep real users out of the test: use a dedicated authenticated test user, synthetic story text only and a short maintenance/test window. Set `HOME_GROQ_TEST_USER_ID` to that user's Supabase Auth UUID. Queue and advance require this exact user; any other signed-in user receives 403 even if the execution flag is enabled. Do not use the public Home UI as an uncontrolled load driver.
 3. **Mandatory spend safeguard:** On a paid Groq organization, configure a low organization-wide monthly Spend Limit and alerts before enabling; see https://console.groq.com/docs/spend-limits. Groq Spend Limits require a paid account and owner access and can lag actual spending by 10–15 minutes. If this feature is unavailable, do not enable open access: use a dedicated project/key with strict rate limits, manually limit test callers and closely monitor https://console.groq.com/ usage. Per-user 10 runs/24 hours is NOT a global budget.
 4. Confirm \`HOME_GROQ_EXECUTION_ENABLED=false\` before and after the smoke test. On the production deployment, server-only \`GROQ_API_KEY\` and legacy \`SUPABASE_SERVICE_ROLE_KEY\` must match the intended production projects and must never enter client bundles, logs or version control.
 5. With execution initially off, verify that signed-out requests, a second user's run ID, malformed JSON/origins, invalid pins, and the enabled gate fail safely. Run full CI, the worker mock tests and a final security review.
@@ -66,4 +66,4 @@ An **isolated Supabase staging project is the recommended, lowest-risk** way to 
 
 ## Scope boundary
 
-**This PR is the authenticated backend runner**, not the final autonomous worker. Phase 1C.4 connects Home controls to these endpoints, safely schedules owner-driven progression, and shows honest source provenance and progress. A later phase must provide a separate secure scheduler if completion when nobody has the page open is required.
+**This PR is the authenticated backend runner**, not the final autonomous worker. Phase 1C.4 connects Home controls to these endpoints, safely schedules owner-driven progression, and shows honest source provenance and progress. A later phase must provide a separate secure scheduler if completion when nobody has the page open is required. Replacing the test-user allowlist with general public access requires a separate explicit security and spending-policy review.
