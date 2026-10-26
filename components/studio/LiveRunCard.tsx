@@ -1,7 +1,7 @@
 "use client";
 
 import { AiTag } from "@/components/ui";
-import { LIVE_AGENTS, outputFor, type HomeProgress } from "./useHomeRun";
+import { LIVE_AGENTS, outputFor } from "./useHomeRun";
 import type { useHomeRun } from "./useHomeRun";
 
 type Controller = ReturnType<typeof useHomeRun>;
