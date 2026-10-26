@@ -91,10 +91,8 @@ create table public.agent_steps (
   started_at timestamptz,
   finished_at timestamptz,
   updated_at timestamptz not null default now(),
-  unique (run_id, agent_key),
-  unique (id, run_id)
+  unique (run_id, agent_key)
 );
-create index agent_steps_run_idx on public.agent_steps (run_id);
 
 create table public.research_sources (
   id uuid primary key default gen_random_uuid(),
@@ -157,10 +155,23 @@ revoke all on public.idea_drafts, public.idea_versions, public.agent_runs,
 grant select on public.idea_drafts, public.idea_versions, public.agent_runs,
   public.agent_steps, public.research_sources, public.agent_usage to authenticated;
 -- Trusted worker only; never expose service-role credentials to client code.
-grant select, insert, update on public.idea_drafts, public.idea_versions, public.agent_runs,
+-- Never grant UPDATE/DELETE on provenance snapshots to the worker.
+grant select, insert on public.idea_versions to service_role;
+grant select, insert, update on public.idea_drafts, public.agent_runs,
   public.agent_steps, public.research_sources, public.agent_usage to service_role;
+-- Supabase defaults can grant DML to service_role; revoke direct mutation explicitly.
+revoke update, delete on public.idea_versions from service_role;
 revoke truncate on public.idea_versions, public.agent_runs, public.agent_steps,
   public.research_sources, public.agent_usage from service_role;
+
+-- Protect historical input from even privileged accidental UPDATE. DELETE cascades
+-- from an idea/user remain possible (no delete trigger); direct worker DELETE denied.
+create trigger append_only before update on public.idea_versions
+  for each row execute function private.forbid_change();
+create trigger touch_updated_at before update on public.agent_runs
+  for each row execute function private.touch_updated_at();
+create trigger touch_updated_at before update on public.agent_steps
+  for each row execute function private.touch_updated_at();
 
 -- RPC 1: atomically create a versioned idea.
 create function public.create_idea_draft(
@@ -218,12 +229,13 @@ begin
   -- Reruns are tied to immutable versions; a revision is allowed while an older version runs.
   v_next := v_draft.current_version + 1;
   update public.idea_drafts set original_text = p_original_text,
-    working_title = p_working_title, current_version = v_next, status = 'draft',
+    working_title = coalesce(p_working_title, v_draft.working_title), current_version = v_next, status = 'draft',
     updated_at = now()
   where id = p_idea_id;
   insert into public.idea_versions
     (idea_id, owner_id, version_number, original_text, working_title, change_note)
-  values (p_idea_id, v_uid, v_next, p_original_text, p_working_title, p_change_note);
+  values (p_idea_id, v_uid, v_next, p_original_text,
+    coalesce(p_working_title, v_draft.working_title), p_change_note);
   return v_next;
 end;
 $$;
