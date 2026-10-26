@@ -1,6 +1,6 @@
 import {
   AgentValidationError, type AgentKey, type AgentOutputs, type MarketInsight,
-} from "./contracts";
+} from "./contracts.ts";
 
 const s = { type: "string" };
 const n = { type: "number" };
