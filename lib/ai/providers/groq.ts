@@ -13,11 +13,19 @@ const TIMEOUT_MS = 25_000;
 export class ProviderRequestError extends Error {
   readonly status: number | null;
   readonly retryAfterSeconds: number | null;
-  constructor(message: string, status: number | null = null, retryAfterSeconds: number | null = null) {
+  /** Machine-readable Groq error code only; never expose model/provider error messages. */
+  readonly providerCode: string | null;
+  constructor(
+    message: string,
+    status: number | null = null,
+    retryAfterSeconds: number | null = null,
+    providerCode: string | null = null,
+  ) {
     super(message);
     this.name = "ProviderRequestError";
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
+    this.providerCode = providerCode;
   }
 }
 
@@ -62,9 +70,10 @@ export class GroqProvider implements ModelProvider {
       throw new ProviderRequestError("GROQ_API_KEY is not configured on the server");
     }
 
+    const deadline = AbortSignal.timeout(TIMEOUT_MS);
+    const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
     let response: Response;
     try {
-      const deadline = AbortSignal.timeout(TIMEOUT_MS);
       response = await this.doFetch(ENDPOINT, {
         method: "POST",
         headers: {
@@ -72,13 +81,13 @@ export class GroqProvider implements ModelProvider {
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
-        signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
+        signal: requestSignal,
         cache: "no-store",
       });
     } catch (error) {
       // No prompt, provider error payload, or credential in exceptions.
       if (signal?.aborted) throw new ProviderRequestError("Groq request cancelled");
-      if (error instanceof Error && error.name === "TimeoutError") {
+      if (deadline.aborted || (error instanceof Error && error.name === "TimeoutError")) {
         throw new ProviderRequestError("Groq request timed out");
       }
       throw new ProviderRequestError("Groq network request failed");
@@ -91,7 +100,31 @@ export class GroqProvider implements ModelProvider {
         throw new ProviderRequestError("Groq authorization failed; check server model access", response.status);
       }
       if (response.status >= 500) throw new ProviderRequestError("Groq temporarily unavailable", response.status, retry);
-      throw new ProviderRequestError("Groq request rejected", response.status);
+
+      // Invalid request and transient schema validation errors can both be HTTP 400.
+      // Only accept a short machine code; never forward the full provider message,
+      // prompt or raw response body into logs/UI.
+      let providerCode: string | null = null;
+      try {
+        const raw = await response.text();
+        if (raw.length <= 4096) {
+          const errorBody: unknown = JSON.parse(raw);
+          if (errorBody !== null && typeof errorBody === "object" && "error" in errorBody) {
+            const detail = (errorBody as { error?: unknown }).error;
+            if (detail !== null && typeof detail === "object" && "code" in detail) {
+              const candidate = (detail as { code?: unknown }).code;
+              if (typeof candidate === "string" && /^[a-z][a-z0-9_]{0,63}$/.test(candidate)) {
+                providerCode = candidate;
+              }
+            }
+          }
+        }
+      } catch {
+        if (signal?.aborted) throw new ProviderRequestError("Groq request cancelled");
+        if (deadline.aborted) throw new ProviderRequestError("Groq request timed out");
+        // Invalid error payloads must not become client-visible text.
+      }
+      throw new ProviderRequestError("Groq request rejected", response.status, null, providerCode);
     }
 
     const size = Number(response.headers.get("content-length"));
@@ -104,6 +137,8 @@ export class GroqProvider implements ModelProvider {
       if (bodyText.length > 300_000) throw new Error("Oversized");
       raw = JSON.parse(bodyText);
     } catch {
+      if (signal?.aborted) throw new ProviderRequestError("Groq request cancelled");
+      if (deadline.aborted) throw new ProviderRequestError("Groq request timed out");
       throw new ProviderRequestError("Groq returned an invalid response");
     }
     if (!raw || typeof raw !== "object") throw new ProviderRequestError("Groq response missing object");
