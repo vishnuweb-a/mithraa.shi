@@ -2,7 +2,8 @@ import "server-only";
 import { AGENT_KEYS, checkIdeaInput, AgentValidationError, type AgentExecution, type AgentKey, type IdeaInput } from "./contracts.ts";
 import { validateOutput } from "./schemas.ts";
 import { runHomeAgent } from "./agents.ts";
-import { createWorkerClient, translateDbError } from "./home-server.ts";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { translateDbError } from "./home-db-errors.ts";
 import { HomeRequestError, requireUuid } from "./home-http.ts";
 import { classifyAgentFailure, marketSourceCandidates, storedRunRouting, type AgentFailure } from "./home-run-policy.ts";
 
@@ -39,13 +40,18 @@ function validateLease(value: unknown): Lease {
  * by its API route before passing ownerId. All writes are gated by a service
  * JWT and validated via database RPCs. There are no background timers.
  */
-export async function executeRunStep(runId: string, ownerId: string): Promise<{
+export async function executeRunStep(
+  runId: string, ownerId: string,
+  deps: { db?: SupabaseClient; runAgent?: typeof runHomeAgent } = {},
+): Promise<{
   state: "executed" | "retry_scheduled" | "idle" | "lease_lost";
   agent?: AgentKey; outcome?: "completed" | "failed"; errorCode?: string;
 }> {
   requireUuid(runId);
   requireUuid(ownerId);
-  const db = createWorkerClient();
+  // Production obtains a server-only client; tests inject an in-memory fake,
+  // allowing the full claim/preflight/Groq/finalize order to be exercised.
+  const db = deps.db ?? (await import("./home-server.ts")).createWorkerClient();
   const { data: rawRun, error: runError } = await db
     .from("agent_runs")
     .select("id,owner_id,idea_id,idea_version,model_mode,request_options,status")
@@ -58,6 +64,7 @@ export async function executeRunStep(runId: string, ownerId: string): Promise<{
   }
 
   const { data: claims, error: claimError } = await db.rpc("claim_home_agent_step", { p_run_id: runId });
+  if (claimError?.code === "42501") throw new HomeRequestError(503, "worker_not_configured");
   if (claimError) throw translateDbError(claimError);
   if (!Array.isArray(claims) || claims.length === 0) return { state: "idle" };
   const lease = validateLease(claims[0]);
@@ -98,7 +105,7 @@ export async function executeRunStep(runId: string, ownerId: string): Promise<{
     if (captureError) throw new HomeRequestError(500, "run_input_unavailable");
     const preceding = capture?.status === "completed" && capture.output
       ? { idea_capture: validateOutput("idea_capture", capture.output) } : undefined;
-    result = await runHomeAgent(lease.agent_key, input, { ...routing, preceding });
+    result = await (deps.runAgent ?? runHomeAgent)(lease.agent_key, input, { ...routing, preceding });
   } catch (error) {
     failure = classifyAgentFailure(error);
   }
