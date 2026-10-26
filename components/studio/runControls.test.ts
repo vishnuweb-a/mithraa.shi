@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runControls } from "./runControls.ts";
+import { runControls, idleAdvanceMessage } from "./runControls.ts";
 import type { HomeProgress, HomeStep } from "./home-run-types.ts";
 
 const step = (status: HomeStep["status"], error_code: string | null = null): HomeStep =>
@@ -39,4 +39,16 @@ test("future retry deadline blocks another model attempt until eligible", () => 
 test("cancellation finalization remains available even during retry cooldown", () => {
   const p = run("running", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:00Z" }], true);
   assert.equal(runControls(p, false, Date.parse("2026-10-26T10:00:00Z")).canAdvance, true);
+});
+
+test("idle after cancellation finalization does not produce a false error", () => {
+  assert.equal(idleAdvanceMessage("idle", run("cancelled", [step("skipped")])), null);
+});
+test("idle while queued step is waiting displays guidance", () => {
+  assert.match(idleAdvanceMessage("idle", run("running", [step("queued")])) ?? "", /not ready/);
+});
+test("idle terminal cleanup and exhausted steps do not display retry guidance", () => {
+  assert.equal(idleAdvanceMessage("idle", run("completed", [step("completed")])), null);
+  assert.equal(idleAdvanceMessage("idle", run("running", [step("failed")])), null);
+  assert.equal(idleAdvanceMessage("executed", run("running", [step("queued")])), null);
 });
