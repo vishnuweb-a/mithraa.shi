@@ -111,3 +111,12 @@ export function executionIsEnabled(env: NodeJS.ProcessEnv = process.env): boolea
   return env.HOME_GROQ_EXECUTION_ENABLED === "true" && Boolean(env.GROQ_API_KEY?.trim()) &&
     Boolean(env.SUPABASE_SERVICE_ROLE_KEY?.trim());
 }
+
+/**
+ * Production acceptance remains limited to one explicitly approved test UID.
+ * The flag + credentials alone never make Groq generally available.
+ */
+export function approvedHomeTestUser(userId: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const approvedId = env.HOME_GROQ_TEST_USER_ID?.trim();
+  return Boolean(approvedId && validUuid(approvedId) && userId === approvedId);
+}
