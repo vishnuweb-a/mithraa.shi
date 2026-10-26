@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentKey } from "@/lib/ai/contracts";
+import { TERMINAL_RUN_STATUSES, idleAdvanceMessage, cancelErrorMessage } from "./runControls";
 import type { HomeProgress, HomeIdea, AgentOutputs } from "./home-run-types";
 export type { HomeProgress, HomeIdea, HomeStep, HomeRun } from "./home-run-types";
 
@@ -14,7 +15,6 @@ export const LIVE_AGENTS: ReadonlyArray<{ key: AgentKey; name: string }> = [
 
 const KEY = "mithraa.home.live-run.v1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const TERMINAL = new Set(["completed", "partial", "failed", "cancelled"]);
 
 class ApiError extends Error {
   constructor(readonly status: number, readonly code: string) {
@@ -48,7 +48,7 @@ export function useHomeRun() {
   const [error, setError] = useState<string | null>(null);
   const lock = useRef(false);
   const pendingIdea = useRef<{ fingerprint: string; ideaId: string; key: string } | null>(null);
-  const terminal = Boolean(progress && TERMINAL.has(progress.run.status));
+  const terminal = Boolean(progress && TERMINAL_RUN_STATUSES.has(progress.run.status));
 
   const refresh = useCallback(async (id: string) => {
     const next = await api<HomeProgress>(`/api/home/runs/${id}`);
@@ -108,27 +108,34 @@ export function useHomeRun() {
   }, [refresh]);
 
   const advance = useCallback(async () => {
-    if (!runId || lock.current || (progress && TERMINAL.has(progress.run.status))) return;
+    if (!runId || lock.current || terminal) return;
     lock.current = true; setBusy(true); setError(null);
     try {
-      await api(`/api/home/runs/${runId}/advance`, post());
-      // Always trust GET status, not 'advance' outcome: a concurrent cancel may have won.
-      await refresh(runId);
+      const response = await api<{ state: string }>(`/api/home/runs/${runId}/advance`, post());
+      // GET is authoritative: an idle advance may have finalized cancellation.
+      const after = await refresh(runId);
+      const message = idleAdvanceMessage(response.state, after);
+      if (message) setError(message);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Unable to advance run");
       try { await refresh(runId); } catch { /* preserve original error */ }
     } finally { lock.current = false; setBusy(false); }
-  }, [runId, progress, refresh]);
+  }, [runId, terminal, refresh]);
 
   const cancel = useCallback(async () => {
-    if (!runId || lock.current || (progress && TERMINAL.has(progress.run.status))) return;
+    if (!runId || lock.current || terminal) return;
     lock.current = true; setBusy(true); setError(null);
     try {
       await api(`/api/home/runs/${runId}/cancel`, post());
       await refresh(runId);
-    } catch (e) { setError(e instanceof Error ? e.message : "Unable to cancel run"); }
-    finally { lock.current = false; setBusy(false); }
-  }, [runId, progress, refresh]);
+    } catch (e) {
+      const original = e instanceof Error ? e.message : "Unable to cancel run";
+      try {
+        const after = await refresh(runId);
+        setError(cancelErrorMessage(original, after));
+      } catch { setError(original); }
+    } finally { lock.current = false; setBusy(false); }
+  }, [runId, terminal, refresh]);
 
   const reset = useCallback(() => {
     if (lock.current) return;

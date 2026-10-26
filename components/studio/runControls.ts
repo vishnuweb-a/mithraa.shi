@@ -1,11 +1,36 @@
 import type { HomeProgress } from "./home-run-types.ts";
 
-/** Pure controls derived from persisted DB statuses. Never infer time from render clocks. */
-export function runControls(progress: HomeProgress | null, busy: boolean) {
-  const terminal = Boolean(progress && ["completed", "partial", "failed", "cancelled"].includes(progress.run.status));
+export const TERMINAL_RUN_STATUSES = new Set(["completed", "partial", "failed", "cancelled"]);
+
+/** Pure UI policy. The server remains authoritative about leases and retry eligibility. */
+export function runControls(progress: HomeProgress | null, busy: boolean, now = Date.now()) {
+  const terminal = Boolean(progress && TERMINAL_RUN_STATUSES.has(progress.run.status));
   const next = progress?.steps.find(s => !["completed", "skipped", "failed"].includes(s.status));
-  const waiting = next?.status === "queued" && Boolean(next.error_code);
   const cancelled = Boolean(progress?.run.cancel_requested_at);
-  return { next, waiting, cancelled, terminal,
-    canAdvance: Boolean(progress && !terminal && !busy && next) };
+  const retryAt = next?.status === "queued" && next.error_code && next.next_attempt_at
+    ? Date.parse(next.next_attempt_at) : NaN;
+  const waiting = Number.isFinite(retryAt) && retryAt > now;
+  return { next, waiting, retryAt: Number.isFinite(retryAt) ? retryAt : null,
+    cancelled,
+    canAdvance: Boolean(progress && !terminal && !busy && (!waiting || cancelled)) };
+}
+
+/** Countdown label: whole minutes until the final minute, then seconds. Never negative. */
+export function retryRemaining(ms: number): string {
+  const remaining = Number.isFinite(ms) ? Math.max(0, ms) : 0;
+  return remaining >= 60_000 ? `${Math.ceil(remaining / 60_000)} min` : `${Math.ceil(remaining / 1_000)} sec`;
+}
+
+/** An idle claim can also mean successful cancellation or terminal cleanup. */
+export function idleAdvanceMessage(state: string, after: HomeProgress): string | null {
+  if (state !== "idle" || TERMINAL_RUN_STATUSES.has(after.run.status)) return null;
+  const next = after.steps.find(step => step.status === "queued" || step.status === "running");
+  const blocked = next?.status === "running" || runControls(after, false).waiting;
+  return blocked ? "This step is not ready yet. Please try again shortly." : null;
+}
+
+/** A lost cancel response is success if the DB recorded the request or finalized it. */
+export function cancelErrorMessage(original: string, after: HomeProgress): string | null {
+  return TERMINAL_RUN_STATUSES.has(after.run.status) || after.run.cancel_requested_at
+    ? null : original;
 }

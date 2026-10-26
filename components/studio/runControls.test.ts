@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runControls } from "./runControls.ts";
+import { runControls, idleAdvanceMessage, cancelErrorMessage, retryRemaining } from "./runControls.ts";
 import type { HomeProgress, HomeStep } from "./home-run-types.ts";
 
 const step = (status: HomeStep["status"], error_code: string | null = null): HomeStep =>
@@ -18,13 +18,76 @@ test("cancel requested permits advance for database cancellation finalization", 
 test("running step permits a new claim attempt to recover expired lease", () => {
   assert.equal(runControls(run("running", [step("running")]), false).canAdvance, true);
 });
-test("queued step with error code indicates retry wait, without deadlocking Continue", () => {
+test("error code without a future retry time does not block Continue", () => {
   const result = runControls(run("running", [step("queued", "rate_limited")]), false);
-  assert.equal(result.waiting, true);
+  assert.equal(result.waiting, false);
   assert.equal(result.canAdvance, true);
 });
-test("terminal, busy, and completed steps block execution", () => {
+test("terminal and busy runs block execution, unfinished finalization remains enabled", () => {
   assert.equal(runControls(run("completed", [step("completed")]), false).canAdvance, false);
   assert.equal(runControls(run("running", [step("queued")]), true).canAdvance, false);
-  assert.equal(runControls(run("running", [step("completed")]), false).canAdvance, false);
+  assert.equal(runControls(run("running", [step("completed")]), false).canAdvance, true);
+});
+
+test("future retry deadline blocks another model attempt until eligible", () => {
+  const p = run("running", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:00Z" }]);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:00:00Z")).waiting, true);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:00:00Z")).canAdvance, false);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:01:00Z")).canAdvance, true);
+});
+
+test("cancellation finalization remains available even during retry cooldown", () => {
+  const p = run("running", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:00Z" }], true);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:00:00Z")).canAdvance, true);
+});
+
+test("idle after cancellation finalization does not produce a false error", () => {
+  assert.equal(idleAdvanceMessage("idle", run("cancelled", [step("skipped")])), null);
+});
+test("idle with a running step displays guidance", () => {
+  assert.match(idleAdvanceMessage("idle", run("running", [step("running")])) ?? "", /not ready/);
+});
+test("idle after exhausted step does not claim the next queued step is blocked", () => {
+  assert.equal(idleAdvanceMessage("idle", run("running", [step("failed"), step("queued")])), null);
+});
+test("idle terminal cleanup and exhausted steps do not display retry guidance", () => {
+  assert.equal(idleAdvanceMessage("idle", run("completed", [step("completed")])), null);
+  assert.equal(idleAdvanceMessage("idle", run("running", [step("failed")])), null);
+  assert.equal(idleAdvanceMessage("executed", run("running", [step("queued")])), null);
+});
+
+test("all failed steps in running run permit server finalization", () => {
+  assert.equal(runControls(run("running", [step("failed")]), false).canAdvance, true);
+});
+
+test("cancel response lost but run already terminal is not an error", () => {
+  assert.equal(cancelErrorMessage("request failed", run("completed", [step("completed")])), null);
+});
+test("cancel response lost but cancel request persisted is not an error", () => {
+  assert.equal(cancelErrorMessage("request failed", run("running", [step("queued")], true)), null);
+});
+test("failed cancel with no recorded request preserves error", () => {
+  assert.equal(cancelErrorMessage("request failed", run("running", [step("queued")])), "request failed");
+});
+
+test("retry countdown switches from minutes to seconds in the final minute and never goes negative", () => {
+  const cases: [number, string][] = [[120000, "2 min"], [90000, "2 min"], [60000, "1 min"], [59999, "60 sec"],
+    [30000, "30 sec"], [5000, "5 sec"], [1000, "1 sec"], [1, "1 sec"], [0, "0 sec"], [-1000, "0 sec"], [NaN, "0 sec"]];
+  for (const [ms, label] of cases) assert.equal(retryRemaining(ms), label, `${ms} ms`);
+});
+test("retry countdown decreases and unblocks Continue exactly at the deadline", () => {
+  const deadline = Date.parse("2026-10-26T10:01:30Z");
+  const p = run("running", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:30Z" }]);
+  const at = (msLeft: number) => runControls(p, false, deadline - msLeft);
+  assert.equal(retryRemaining(at(90000).retryAt! - (deadline - 90000)), "2 min");
+  assert.equal(retryRemaining(at(45000).retryAt! - (deadline - 45000)), "45 sec");
+  assert.equal(at(1).waiting, true);
+  assert.equal(at(1).canAdvance, false);
+  assert.equal(at(0).waiting, false);
+  assert.equal(at(0).canAdvance, true);
+  assert.equal(at(-1000).canAdvance, true);
+});
+test("terminal run cannot execute another agent even after a retry deadline", () => {
+  const p = run("failed", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:00Z" }]);
+  assert.equal(runControls(p, false, Date.parse("2026-10-26T10:02:00Z")).canAdvance, false);
 });
