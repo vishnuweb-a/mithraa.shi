@@ -37,7 +37,7 @@ Both routines are `SECURITY DEFINER`, with `search_path = ''`. The execution gra
 
 `supabase/tests/home_agent_worker.test.sql` adds 17 pgTAP assertions covering browser access denial, step order, exclusive claims, lease-token protection, idempotent completion and usage, throttled retry, stale-token rejection, citation verification flag and queued cancellation.
 
-CI runs this new suite with all prior pgTAP tests plus `supabase/tests/concurrency.sh`, existing Next typecheck, lint, unit/build and browser E2E checks.
+The existing `supabase/tests/concurrency.sh` now includes a **real two-session worker race**: the second worker gets no lease while the first holds the run lock, and exactly one step/attempt is recorded. CI runs this new pgTAP suite with all prior database tests plus the expanded two-session concurrency script, existing Next typecheck, lint, unit/build and browser E2E checks.
 
 **Review before merge:** Run Ponytail on the entire PR diff, including lock order, parent-run serialization, stale lease recovery and function grants.
 
