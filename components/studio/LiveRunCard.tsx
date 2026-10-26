@@ -96,7 +96,7 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
         <div className="text-[12px] text-[var(--muted)]">
           <strong className="text-[var(--ink)]">{completed}/4 agents complete</strong>
           <span className="ml-2">· {progress?.run.status ?? "Loading run"}{cancelled ? " · cancellation requested" : ""}</span>
-          {waiting && retryAt !== null && <p role="status">Paused — {next?.error_code === "rate_limited" ? "Groq rate limit reached" : "retry scheduled"}. Retry available {new Date(retryAt).toLocaleString()} {now > 0 ? ` (${Math.ceil((retryAt - now) / 1000)} seconds remaining)` : ""}.</p>}
+          {waiting && retryAt !== null && <p role="status">Paused — {next?.error_code === "rate_limited" ? "Groq rate limit reached" : "retry scheduled"}. Retry available {new Date(retryAt).toLocaleString()} {now > 0 ? `(${Math.ceil((retryAt - now) / 60000) >= 1 ? `${Math.ceil((retryAt - now) / 60000)} min` : `${Math.ceil((retryAt - now) / 1000)} sec`} remaining)` : ""}.</p>}
           <p className="mt-1">No automatic Groq calls: each Continue executes at most one step.</p>
         </div>
         <div className="flex flex-wrap gap-2">
