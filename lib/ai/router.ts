@@ -34,4 +34,3 @@ export function selectGroqModel(input: {
   return premium && needDepth ? DEEP : FAST;
 }
 
-export const GROQ_MODELS = { fast: FAST, deep: DEEP } as const;
