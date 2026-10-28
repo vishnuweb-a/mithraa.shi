@@ -113,10 +113,17 @@ export function executionIsEnabled(env: NodeJS.ProcessEnv = process.env): boolea
 }
 
 /**
- * Production acceptance remains limited to one explicitly approved test UID.
+ * Groq execution is limited to explicitly approved Supabase Auth UUIDs.
+ * HOME_GROQ_ALLOWED_USER_IDS (comma-separated) wins whenever it is set; the
+ * legacy single HOME_GROQ_TEST_USER_ID applies only when it is absent.
+ * Any blank or non-UUID entry denies everyone rather than partially applying.
  * The flag + credentials alone never make Groq generally available.
  */
 export function approvedHomeTestUser(userId: string, env: NodeJS.ProcessEnv = process.env): boolean {
-  const approvedId = env.HOME_GROQ_TEST_USER_ID?.trim();
-  return Boolean(approvedId && validUuid(approvedId) && userId === approvedId);
+  const raw = env.HOME_GROQ_ALLOWED_USER_IDS ?? env.HOME_GROQ_TEST_USER_ID;
+  if (raw === undefined || !validUuid(userId)) return false;
+  const ids = raw.split(",").map((id) => id.trim().toLowerCase());
+  if (!ids.every(validUuid)) return false;
+  // Duplicate entries are harmless: membership is all that matters.
+  return ids.includes(userId.toLowerCase());
 }

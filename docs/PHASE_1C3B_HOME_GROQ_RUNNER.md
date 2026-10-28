@@ -32,7 +32,26 @@ The four Phase 1C.2 agents, output schemas, research constraints, and approved G
 - \`GROQ_API_KEY\`: secret Groq key already used by the merged adapter
 - \`SUPABASE_SERVICE_ROLE_KEY\`: **legacy service_role JWT**, not publishable/anon key, for the same Supabase project.
 
-All four settings (activation flag, Groq key, service-role JWT and HOME_GROQ_TEST_USER_ID) must be available only to the server. The approved test user UUID must match the signed-in user before queue or advance can run; when unset, paid execution is denied to everyone. Never set \`NEXT_PUBLIC_\` for secrets, and never paste real keys into GitHub/CI/tests.
+All settings (activation flag, Groq key, service-role JWT and the approved-user allowlist) must be available only to the server. The signed-in user's UUID must be on the allowlist before queue or advance can run; when unset or invalid, paid execution is denied to everyone. Never set \`NEXT_PUBLIC_\` for secrets, and never paste real keys into GitHub/CI/tests.
+
+### Approved users (`HOME_GROQ_ALLOWED_USER_IDS`)
+
+Groq execution is limited to an explicit allowlist of Supabase Auth user UUIDs, checked in both the queue/advance API routes and `executeRunStep()`:
+
+- `HOME_GROQ_ALLOWED_USER_IDS`: comma-separated UUIDs, e.g. `uuid-1,uuid-2`. Whitespace and duplicates are ignored; matching is case-insensitive. **Never use email addresses.**
+- When `HOME_GROQ_ALLOWED_USER_IDS` is set, it fully replaces `HOME_GROQ_TEST_USER_ID`. If it is blank or **any** entry is not a UUID, everyone is denied (fail closed; no fallback to the legacy variable).
+- When it is absent, the legacy single `HOME_GROQ_TEST_USER_ID` still applies.
+- Each user still needs an authenticated, non-anonymous session, and may only queue, advance, read or cancel their **own** runs (`owner_id` filters + RLS). Being allowlisted grants no access to other users' ideas or runs.
+
+**Vercel configuration (Production environment only, set manually by the owner):**
+
+| Name | Value | Environments |
+| --- | --- | --- |
+| `HOME_GROQ_ALLOWED_USER_IDS` | `<user-1-uuid>,<user-2-uuid>` (from Supabase Dashboard → Authentication → Users → User UID) | Production only, plain/sensitive server variable, **no** `NEXT_PUBLIC_` prefix |
+| `HOME_GROQ_TEST_USER_ID` | leave as-is or remove; ignored while the allowlist is set | Production |
+| `HOME_GROQ_EXECUTION_ENABLED`, `GROQ_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | unchanged | Production |
+
+Environment variable changes only take effect after a redeploy. To revoke a user, remove their UUID and redeploy; to stop all execution, set `HOME_GROQ_EXECUTION_ENABLED=false` and redeploy.
 
 The execution endpoints are not automatically invoked by a deployment. The Home prototype still uses its existing deterministic workflow until Phase 1C.4 integrates this API.
 

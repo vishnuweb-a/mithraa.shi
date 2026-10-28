@@ -89,3 +89,29 @@ test("only a named production acceptance user can trigger billable execution", (
     HOME_GROQ_TEST_USER_ID: "not-a-uuid",
   } as unknown as NodeJS.ProcessEnv), false);
 });
+
+test("allowlist approves exactly the listed Supabase UUIDs and fails closed on bad config", () => {
+  const first = "f3000000-0000-4000-8000-000000000002";
+  const second = "f3000000-0000-4000-8000-00000000000a";
+  const third = "f3000000-0000-4000-8000-000000000003";
+  const allow = (value: string, extra: Record<string, string> = {}) =>
+    ({ HOME_GROQ_ALLOWED_USER_IDS: value, ...extra }) as unknown as NodeJS.ProcessEnv;
+
+  const env = allow(` ${first} ,${second.toUpperCase()}, ${first}`);
+  assert.equal(approvedHomeTestUser(first, env), true, "original user");
+  assert.equal(approvedHomeTestUser(second, env), true, "second user, case/whitespace/duplicates tolerated");
+  assert.equal(approvedHomeTestUser(third, env), false, "third user denied");
+  assert.equal(approvedHomeTestUser("", env), false);
+  assert.equal(approvedHomeTestUser("someone@example.com", allow("someone@example.com")), false, "emails never authorize");
+
+  for (const bad of ["", " ", ",", `${first},`, `${first},not-a-uuid`, `${first};${second}`]) {
+    assert.equal(approvedHomeTestUser(first, allow(bad)), false, `invalid allowlist ${JSON.stringify(bad)}`);
+  }
+  // The new variable wins whenever set, even if broken: no silent fallback widens access.
+  assert.equal(approvedHomeTestUser(first, allow("", { HOME_GROQ_TEST_USER_ID: first })), false);
+  assert.equal(approvedHomeTestUser(first, allow(second, { HOME_GROQ_TEST_USER_ID: first })), false);
+  // Legacy single-user configuration still works when the allowlist is absent.
+  const legacy = { HOME_GROQ_TEST_USER_ID: ` ${first} ` } as unknown as NodeJS.ProcessEnv;
+  assert.equal(approvedHomeTestUser(first, legacy), true);
+  assert.equal(approvedHomeTestUser(second, legacy), false);
+});
