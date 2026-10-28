@@ -18,13 +18,27 @@ export interface IdeaInput {
 export interface TokenUsage {
   inputTokens: number | null;
   outputTokens: number | null;
-  source: "provider" | "unavailable";
+  source: "provider" | "estimated" | "unavailable";
 }
 
 export interface ModelResult<T> {
   data: T;
   usage: TokenUsage;
   model: string;
+  /** Diagnostics only; never content. */
+  requestId?: string | null;
+  finishReason?: string | null;
+}
+
+/** Content-free metadata for one provider request, successful or not. */
+export interface ProviderCall {
+  kind: "research" | "generate";
+  provider: string;
+  model: string;
+  requestId: string | null;
+  finishReason: string | null;
+  usage: TokenUsage;
+  durationMs: number;
 }
 
 export interface ModelProvider {
@@ -35,6 +49,7 @@ export interface ModelProvider {
     user: string;
     schemaName: string;
     schema: Record<string, unknown>;
+    maxOutputTokens?: number;
     signal?: AbortSignal;
   }): Promise<ModelResult<unknown>>;
   research(input: {
@@ -105,9 +120,14 @@ export interface AgentExecution<K extends AgentKey = AgentKey> {
 }
 
 export class AgentValidationError extends Error {
-  constructor(message: string) {
+  /** Field path and issue code come from our validator, never from model text. */
+  readonly path: string;
+  readonly issue: string;
+  constructor(message: string, path = "", issue = "invalid") {
     super(message);
     this.name = "AgentValidationError";
+    this.path = path;
+    this.issue = issue;
   }
 }
 
@@ -133,10 +153,18 @@ export function checkIdeaInput(input: IdeaInput): void {
   }
 }
 
-export function combineUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
-  return {
-    inputTokens: a.inputTokens === null || b.inputTokens === null ? null : a.inputTokens + b.inputTokens,
-    outputTokens: a.outputTokens === null || b.outputTokens === null ? null : a.outputTokens + b.outputTokens,
-    source: a.source === "provider" && b.source === "provider" ? "provider" : "unavailable",
+/**
+ * Sums known counts across calls. "provider": every call reported its usage;
+ * "estimated": a lower bound, some call did not; "unavailable": nothing known.
+ */
+export function combineUsage(...parts: TokenUsage[]): TokenUsage {
+  const sum = (field: "inputTokens" | "outputTokens") => {
+    const known = parts.map((p) => p[field]).filter((n): n is number => n !== null);
+    return known.length ? known.reduce((a, b) => a + b, 0) : null;
   };
+  const inputTokens = sum("inputTokens");
+  const outputTokens = sum("outputTokens");
+  const source = parts.length && parts.every((p) => p.source === "provider") ? "provider"
+    : inputTokens === null && outputTokens === null ? "unavailable" : "estimated";
+  return { inputTokens, outputTokens, source };
 }

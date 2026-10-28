@@ -1,11 +1,16 @@
 import "server-only";
-import { AGENT_KEYS, checkIdeaInput, AgentValidationError, type AgentExecution, type AgentKey, type IdeaInput } from "./contracts.ts";
-import { validateOutput } from "./schemas.ts";
+import {
+  AGENT_KEYS, checkIdeaInput, AgentValidationError,
+  type AgentExecution, type AgentKey, type IdeaInput, type ProviderCall,
+} from "./contracts.ts";
 import { runHomeAgent } from "./agents.ts";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { translateDbError } from "./home-db-errors.ts";
 import { HomeRequestError, requireUuid, approvedHomeTestUser } from "./home-http.ts";
-import { classifyAgentFailure, marketSourceCandidates, storedRunRouting, type AgentFailure } from "./home-run-policy.ts";
+import {
+  attemptDiagnostics, attemptUsage, classifyAgentFailure, failureDetail, marketSourceCandidates,
+  precedingOutputs, storedRunRouting, type AgentFailure,
+} from "./home-run-policy.ts";
 
 type Row = Record<string, unknown>;
 type Lease = { step_id: string; claimed_run_id: string; agent_key: AgentKey; lease_token: string; attempt_number: number };
@@ -42,7 +47,7 @@ function validateLease(value: unknown): Lease {
  */
 export async function executeRunStep(
   runId: string, ownerId: string,
-  deps: { db?: SupabaseClient; runAgent?: typeof runHomeAgent } = {},
+  deps: { db?: SupabaseClient; runAgent?: typeof runHomeAgent; log?: (record: Record<string, unknown>) => void } = {},
 ): Promise<{
   state: "executed" | "retry_scheduled" | "idle" | "lease_lost";
   agent?: AgentKey; outcome?: "completed" | "failed"; errorCode?: string;
@@ -77,6 +82,16 @@ export async function executeRunStep(
 
   let result: AgentExecution | null = null;
   let failure: AgentFailure | null = null;
+  let caught: unknown = null;
+  const calls: ProviderCall[] = [];
+  const started = Date.now();
+  // A cancel requested mid-step must stop any further model request in this step.
+  const stopIfCancelled = async () => {
+    const { data, error } = await db.from("agent_runs")
+      .select("cancel_requested_at").eq("id", runId).eq("owner_id", ownerId).maybeSingle();
+    if (error || !data) throw new HomeRequestError(500, "run_input_unavailable");
+    if (data.cancel_requested_at) throw new HomeRequestError(409, "run_cancelled");
+  };
   try {
     const [{ data: draft, error: draftError }, { data: version, error: versionError }] = await Promise.all([
       db.from("idea_drafts")
@@ -104,16 +119,23 @@ export async function executeRunStep(
       throw error;
     }
     const routing = storedRunRouting(run);
-    // Completed, validated Idea Capture output enriches subsequent agents.
-    const { data: capture, error: captureError } = await db.from("agent_steps")
-      .select("output,status").eq("run_id", runId).eq("agent_key", "idea_capture").maybeSingle();
-    if (captureError) throw new HomeRequestError(500, "run_input_unavailable");
-    const preceding = capture?.status === "completed" && capture.output
-      ? { idea_capture: validateOutput("idea_capture", capture.output) } : undefined;
-    result = await (deps.runAgent ?? runHomeAgent)(lease.agent_key, input, { ...routing, preceding });
+    // Downstream agents receive the persisted, validated outputs of every earlier agent.
+    const { data: steps, error: stepsError } = await db.from("agent_steps")
+      .select("id,agent_key,status,output,error_message").eq("run_id", runId);
+    if (stepsError || !Array.isArray(steps)) throw new HomeRequestError(500, "run_input_unavailable");
+    const preceding = precedingOutputs(lease.agent_key, steps);
+    const previousIssue = steps.find((s) => s.id === lease.step_id)?.error_message;
+    result = await (deps.runAgent ?? runHomeAgent)(lease.agent_key, input, {
+      ...routing, preceding, previousIssue: typeof previousIssue === "string" ? previousIssue : null,
+      onCall: (call) => calls.push(call), beforeCall: stopIfCancelled,
+    });
   } catch (error) {
     failure = classifyAgentFailure(error);
+    caught = error;
   }
+  const record = attemptDiagnostics({ runId, agentKey: lease.agent_key, attempt: lease.attempt_number,
+    durationMs: Date.now() - started, calls, failure, error: caught });
+  (deps.log ?? (failure ? console.warn : console.info))(record);
 
   if (result) {
     const { data: committed, error: finishError } = await db.rpc("finish_home_agent_step", {
@@ -133,14 +155,28 @@ export async function executeRunStep(
     return { state: committed ? "executed" : "lease_lost", agent: lease.agent_key, outcome: "completed" };
   }
   const error = failure ?? { code: "agent_unexpected_error", retryable: false, retryAfterSeconds: null };
-  const { data: committed, error: finishError } = await db.rpc("finish_home_agent_step", {
+  // Failed attempts still spend tokens; the DB adds them to the step's usage.
+  const usage = attemptUsage(calls);
+  const failed = {
     p_step_id: lease.step_id,
     p_lease_token: lease.lease_token,
     p_outcome: "failed",
     p_error_code: error.code,
     p_retryable: error.retryable,
     p_retry_after_seconds: error.retryAfterSeconds,
-  });
+    p_error_detail: failureDetail(caught),
+    p_provider: calls.at(-1)?.provider ?? null,
+    p_model: calls.at(-1)?.model ?? null,
+    p_input_tokens: usage.inputTokens,
+    p_output_tokens: usage.outputTokens,
+    p_usage_source: usage.source,
+  };
+  let { data: committed, error: finishError } = await db.rpc("finish_home_agent_step", failed);
+  // shortcut: a schema without 20261028120000 has no p_error_detail (PGRST202, nothing written);
+  // retry without it so the failure is still recorded. Remove once that migration is everywhere.
+  if (finishError?.code === "PGRST202") {
+    ({ data: committed, error: finishError } = await db.rpc("finish_home_agent_step", { ...failed, p_error_detail: undefined }));
+  }
   if (finishError) throw translateDbError(finishError);
   return {
     state: !committed ? "lease_lost" : error.retryable ? "retry_scheduled" : "executed",

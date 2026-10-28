@@ -4,7 +4,7 @@ import { AiTag } from "@/components/ui";
 import { useEffect, useState } from "react";
 import { LIVE_AGENTS, outputFor } from "./useHomeRun";
 import type { useHomeRun } from "./useHomeRun";
-import { retryRemaining, runControls } from "./runControls";
+import { retryRemaining, runControls, runNotice, stepMessage } from "./runControls";
 
 type Controller = ReturnType<typeof useHomeRun>;
 
@@ -16,7 +16,8 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
   const ip = outputFor(progress, "ip_scout");
   const completed = progress?.steps.filter(s => s.status === "completed").length ?? 0;
   const [now, setNow] = useState(0);
-  const { next, waiting, retryAt, cancelled, canAdvance } = runControls(progress, busy, now);
+  const { next, waiting, retryAt, cancelled, stopped, canAdvance } = runControls(progress, busy, now);
+  const notice = runNotice(progress);
   useEffect(() => {
     if (retryAt === null) return;
     // Only update after mounting so hydration stays consistent.
@@ -56,7 +57,7 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
             const status = step?.status ?? "queued";
             return (
               <li key={a.key} className={`rounded-[9px] px-2.5 py-1 text-[12px] ${status === "completed" ? "bg-white/[0.05] text-[var(--ink-2)]" : status === "running" ? "bg-[var(--brand-soft)] text-[var(--brand)]" : "text-[var(--faint)]"}`}>
-                {status === "completed" ? "✓" : status === "running" ? "◌" : "·"} {a.name} · {status.replaceAll("_", " ")}
+                {status === "completed" ? "✓" : status === "running" ? "◌" : status === "failed" ? "✕" : "·"} {a.name} · {status.replaceAll("_", " ")}
               </li>
             );
           })}
@@ -90,13 +91,14 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
           <ul className="mt-2 list-inside list-disc">{ip.concerns.concat(ip.rightsToVerify).map((v,i) => <li key={i}>{v}</li>)}</ul>
         </section>}
         {error && <p role="alert" className="rounded-[10px] bg-red-500/10 p-3 text-[13px] text-red-300">{error}</p>}
-        {progress?.steps.filter(s => s.error_code).map(s => <p role="status" className="text-[12px] text-[var(--muted)]" key={s.id}>{s.agent_key}: {s.error_code} (attempt {s.attempts})</p>)}
+        {notice && <p role="status" className="rounded-[10px] bg-red-500/10 p-3 text-[13px] text-red-300">{notice}</p>}
+        {progress?.steps.map(s => ({ id: s.id, text: stepMessage(s) })).filter(m => m.text).map(m => <p role="status" className="text-[12px] text-[var(--muted)]" key={m.id}>{m.text}</p>)}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--rule)] bg-[var(--sheet-2)] px-5 py-4 md:px-6">
         <div className="text-[12px] text-[var(--muted)]">
           <strong className="text-[var(--ink)]">{completed}/4 agents complete</strong>
           <span className="ml-2">· {progress?.run.status ?? "Loading run"}{cancelled ? " · cancellation requested" : ""}</span>
-          {waiting && retryAt !== null && <p role="status">Paused — {next?.error_code === "rate_limited" ? "Groq rate limit reached" : "retry scheduled"}. Retry available {new Date(retryAt).toLocaleString()} {/* Ticks every second; hidden from screen readers so the live region isn't re-announced each tick. */}
+          {waiting && retryAt !== null && <p role="status">Paused — {next?.error_code === "rate_limited" ? "AI service rate-limited" : "retry scheduled"}. Retry available {new Date(retryAt).toLocaleString()} {/* Ticks every second; hidden from screen readers so the live region isn't re-announced each tick. */}
             {now > 0 && <span aria-hidden="true">({retryRemaining(retryAt - now)} remaining)</span>}.</p>}
           <p className="mt-1">No automatic Groq calls: each Continue executes at most one step.</p>
         </div>
@@ -104,7 +106,7 @@ export function LiveRunCard({ controller }: { controller: Controller }) {
           {terminal && <button type="button" className="btn" onClick={reset}>New idea</button>}
           {!terminal && <button type="button" className="btn" onClick={() => { if (window.confirm("Cancel this run permanently? Remaining agents will be skipped. Completed results are preserved.")) void cancel(); }} disabled={busy || cancelled || !progress}>Cancel</button>}
           {!terminal && <button type="button" className="btn btn-primary" onClick={() => void advance()} disabled={!canAdvance}>
-            {busy ? "Processing…" : cancelled ? "Finalize cancellation" : waiting ? "Waiting for retry" : "Continue next agent"}
+            {busy ? "Processing…" : cancelled ? "Finalize cancellation" : stopped ? "Finalize run" : waiting ? "Waiting for retry" : "Continue next agent"}
           </button>}
         </div>
       </div>

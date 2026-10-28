@@ -96,9 +96,9 @@ test("source candidates enforce the DB limit and reject invented URLs", () => {
   const entries = marketSourceCandidates(marketRun(insights, urls.join("\n")));
   assert.equal(entries.length, 20);
   assert.equal(entries[19].url, urls[19]);
-  assert.throws(() => marketSourceCandidates(marketRun([
+  assert.deepEqual(marketSourceCandidates(marketRun([
     { claim: "An invented source", sourceUrl: "https://attacker.example/made-up", evidenceStatus: "sourced" },
-  ], "The source https://research.example/actual was found.")), AgentValidationError);
+  ], "The source https://research.example/actual was found.")), [], "invented URLs never become source records");
 });
 
 test("non-Market-Scout results cannot create source records", () => {
