@@ -1,6 +1,11 @@
 -- Phase 1C.5: strict agent order, a bounded failure policy, and token usage for
 -- failed attempts. Forward-only: replaces the 1C.3a worker RPCs in place.
 -- Apply this migration BEFORE deploying the app code that passes p_error_detail.
+-- Additive only: existing runs, steps, usage and sources are kept as they are.
+
+-- Rate-limit waits that were refunded instead of spending one of three attempts.
+alter table public.agent_steps
+  add column rate_limit_waits smallint not null default 0;
 
 -- Internal; runs under the caller's run lock. A failed step ends the run: every
 -- later step is skipped, never executed, and completed outputs are kept.
@@ -144,6 +149,23 @@ begin
     return false;
   end if;
 
+  -- One usage row per step totals every attempt, including failed and
+  -- cancelled ones: those tokens are billed even when the result is discarded.
+  if p_provider is not null and p_model is not null then
+    insert into public.agent_usage as u
+      (step_id,provider,model,input_tokens,output_tokens,usage_source)
+    values (p_step_id,p_provider,p_model,p_input_tokens,p_output_tokens,p_usage_source)
+    on conflict (step_id) do update set
+      provider = excluded.provider, model = excluded.model,
+      input_tokens = case when u.input_tokens is null and excluded.input_tokens is null then null
+        else coalesce(u.input_tokens,0) + coalesce(excluded.input_tokens,0) end,
+      output_tokens = case when u.output_tokens is null and excluded.output_tokens is null then null
+        else coalesce(u.output_tokens,0) + coalesce(excluded.output_tokens,0) end,
+      usage_source = case when u.usage_source = excluded.usage_source
+        then u.usage_source else 'estimated' end,
+      recorded_at = v_now;
+  end if;
+
   if v_run.cancel_requested_at is not null then
     update public.agent_steps set status = 'skipped', finished_at = v_now,
       lease_token = null, lease_expires_at = null where id = p_step_id;
@@ -174,6 +196,19 @@ begin
       values (p_step_id,v_entry->>'url',v_entry->>'title',
         v_entry->>'claim','web',false);
     end loop;
+  elsif p_error_code = 'rate_limited' and v_step.rate_limit_waits < 5
+    and coalesce(p_input_tokens,0) = 0 and coalesce(p_output_tokens,0) = 0 then
+    -- A free 429 is waiting, not a failed answer: refund the attempt, at most
+    -- five times per step. A 429 after billed tokens (e.g. Market Scout research)
+    -- still spends an attempt, so paid calls stay bounded.
+    update public.agent_steps set status = 'queued',
+      attempts = attempts - 1, rate_limit_waits = rate_limit_waits + 1,
+      next_attempt_at = v_now + make_interval(secs =>
+        greatest(5,least(3600,coalesce(p_retry_after_seconds,30)))),
+      lease_token = null, lease_expires_at = null,
+      error_code = 'rate_limited',
+      error_message = coalesce(left(p_error_detail,200), error_message)
+    where id = p_step_id;
   elsif p_retryable and v_step.attempts < 3 then
     update public.agent_steps set status = 'queued',
       next_attempt_at = v_now + make_interval(secs =>
@@ -190,21 +225,6 @@ begin
     where id = p_step_id;
   end if;
 
-  -- One usage row per step totals every attempt, including failed ones.
-  if p_provider is not null and p_model is not null then
-    insert into public.agent_usage as u
-      (step_id,provider,model,input_tokens,output_tokens,usage_source)
-    values (p_step_id,p_provider,p_model,p_input_tokens,p_output_tokens,p_usage_source)
-    on conflict (step_id) do update set
-      provider = excluded.provider, model = excluded.model,
-      input_tokens = case when u.input_tokens is null and excluded.input_tokens is null then null
-        else coalesce(u.input_tokens,0) + coalesce(excluded.input_tokens,0) end,
-      output_tokens = case when u.output_tokens is null and excluded.output_tokens is null then null
-        else coalesce(u.output_tokens,0) + coalesce(excluded.output_tokens,0) end,
-      usage_source = case when u.usage_source = excluded.usage_source
-        then u.usage_source else 'estimated' end,
-      recorded_at = v_now;
-  end if;
 
   perform public.settle_home_agent_run(v_run.id, v_now);
   return true;
@@ -217,3 +237,6 @@ revoke all on function public.finish_home_agent_step(
 grant execute on function public.finish_home_agent_step(
   uuid,uuid,text,jsonb,text,text,text,bigint,bigint,text,text,boolean,integer,jsonb,text
 ) to service_role;
+
+-- PostgREST must see the new signature before the app sends p_error_detail.
+notify pgrst, 'reload schema';

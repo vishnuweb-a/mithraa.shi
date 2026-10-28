@@ -55,8 +55,10 @@ export function stepMessage(step: HomeStep): string | null {
   if (!step.error_code || (step.status !== "failed" && step.status !== "queued")) return null;
   const reason = REASONS[step.error_code] ?? "hit an unexpected error";
   const plural = step.attempts === 1 ? "" : "s";
-  return step.status === "failed"
-    ? `${name} ${reason} and could not complete after ${step.attempts} attempt${plural}.`
+  if (step.status === "failed") return `${name} ${reason} and could not complete after ${step.attempts} attempt${plural}.`;
+  // The server may refund a rate-limit wait, so the attempt count is not "retry N".
+  return step.error_code === "rate_limited"
+    ? `${name} ${reason}. Continue when the wait ends.`
     : `${name} ${reason}. Retry ${step.attempts + 1} of ${MAX_ATTEMPTS} is scheduled.`;
 }
 

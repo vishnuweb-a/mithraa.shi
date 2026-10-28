@@ -2,19 +2,19 @@
 -- Never run this fixture on a production database.
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(30);
+select plan(45);
 
 insert into auth.users (id,email)
 values ('f4000000-0000-0000-0000-000000000001','strict-order@example.test');
 
--- Five runs, one idea each (one active run per idea).
+-- Seven runs, one idea each (one active run per idea).
 select set_config('request.jwt.claims',
   '{"sub":"f4000000-0000-0000-0000-000000000001","role":"authenticated"}',true);
 set local role authenticated;
 select set_config('test.run_' || n,
   public.queue_idea_agent_run(public.create_idea_draft('Strict order idea ' || n),
     'strict-order-test-key-' || n)::text,true)
-from generate_series(1,5) n;
+from generate_series(1,7) n;
 select throws_ok($$select public.settle_home_agent_run(gen_random_uuid(),now())$$,
   '42501',null,'browser cannot call the internal settle helper');
 reset role;
@@ -40,6 +40,18 @@ $$;
 create function pg_temp.step(p_run text, p_agent text) returns public.agent_steps language sql as $$
   select * from public.agent_steps
   where run_id = current_setting('test.' || p_run)::uuid and agent_key = p_agent;
+$$;
+
+create function pg_temp.limited(p_tokens bigint) returns boolean language sql as $$
+  select public.finish_home_agent_step((select step_id from lease),(select token from lease),
+    'failed',p_provider => 'groq',p_model => 'openai/gpt-oss-20b',
+    p_input_tokens => p_tokens,p_output_tokens => null,
+    p_usage_source => case when p_tokens is null then 'unavailable' else 'provider' end,
+    p_error_code => 'rate_limited',p_retryable => true,p_retry_after_seconds => 7);
+$$;
+create function pg_temp.ready(p_run text) returns void language sql as $$
+  update public.agent_steps set next_attempt_at=clock_timestamp()-interval '1 second'
+  where run_id=current_setting('test.' || p_run)::uuid;
 $$;
 
 grant all on lease to service_role;
@@ -137,6 +149,49 @@ select is((pg_temp.step('run_5','idea_capture')).error_message,null,'completion 
 select is((select input_tokens from public.agent_usage
   where step_id=(pg_temp.step('run_5','idea_capture')).id),110::bigint,
   'usage totals the failed and the successful attempt');
+
+-- Run 6: the pre-migration app's call (no p_error_detail) still resolves, and a
+-- cancelled attempt's billed tokens are recorded even though its output is dropped.
+select pg_temp.claim('run_6');
+reset role;
+update public.agent_runs set cancel_requested_at=now() where id=current_setting('test.run_6')::uuid;
+set local role service_role;
+select is(pg_temp.complete('{"title":"Late"}'),true,'old 14-argument named call resolves on the new signature');
+select is((select status from public.agent_runs where id=current_setting('test.run_6')::uuid),
+  'cancelled','cancellation wins over a late successful result');
+select is((pg_temp.step('run_6','idea_capture')).output,null,'cancelled output is not persisted');
+select is((select input_tokens from public.agent_usage
+  where step_id=(pg_temp.step('run_6','idea_capture')).id),10::bigint,'cancelled attempt tokens are counted');
+
+-- Run 7: free rate-limit waits are refunded, at most five times; billed 429s spend attempts.
+select pg_temp.claim('run_7'); select pg_temp.fail('agent_validation',true,'too_long@title');
+reset role; select pg_temp.ready('run_7'); set local role service_role;
+select pg_temp.claim('run_7');
+select is(pg_temp.limited(null),true,'free 429 is committed');
+select is((pg_temp.step('run_7','idea_capture')).attempts,1,'free 429 refunds its attempt');
+select is((pg_temp.step('run_7','idea_capture')).rate_limit_waits::int,1,'refund is counted');
+select is((pg_temp.step('run_7','idea_capture')).error_message,'too_long@title',
+  'a 429 keeps the earlier validator detail for the corrective prompt');
+select ok((pg_temp.step('run_7','idea_capture')).next_attempt_at > clock_timestamp(),'Retry-After is honored');
+reset role; select pg_temp.ready('run_7'); set local role service_role;
+select pg_temp.claim('run_7'); select pg_temp.limited(50);
+select is((pg_temp.step('run_7','idea_capture')).attempts,2,'a 429 after billed tokens spends an attempt');
+select is((pg_temp.step('run_7','idea_capture')).rate_limit_waits::int,1,'billed 429 is not refunded');
+reset role; select pg_temp.ready('run_7'); set local role service_role;
+select pg_temp.claim('run_7'); select pg_temp.limited(null);
+reset role; select pg_temp.ready('run_7'); set local role service_role;
+select pg_temp.claim('run_7'); select pg_temp.limited(null);
+reset role; select pg_temp.ready('run_7'); set local role service_role;
+select pg_temp.claim('run_7'); select pg_temp.limited(null);
+reset role; select pg_temp.ready('run_7'); set local role service_role;
+select pg_temp.claim('run_7'); select pg_temp.limited(null);
+select is((pg_temp.step('run_7','idea_capture')).rate_limit_waits::int,5,'five refunds used');
+select is((pg_temp.step('run_7','idea_capture')).attempts,2,'refunds never raise the attempt count');
+reset role; select pg_temp.ready('run_7'); set local role service_role;
+select pg_temp.claim('run_7'); select pg_temp.limited(null);
+select is((pg_temp.step('run_7','idea_capture')).status,'failed','a sixth 429 on the last attempt is final');
+select is((select status from public.agent_runs where id=current_setting('test.run_7')::uuid),
+  'failed','rate-limited run still finalizes');
 
 select * from finish();
 rollback;

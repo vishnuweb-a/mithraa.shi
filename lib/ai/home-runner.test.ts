@@ -342,3 +342,42 @@ test("duplicate clicks: only the request holding the lease reaches Groq", async 
   assert.deepEqual(results.map((r) => r.state).sort(), ["executed", "idle"]);
   assert.equal(fx.finished.length, 1);
 });
+
+test("app deployed before the migration still records a failure on the old finish signature", async () => {
+  const fx = fixture();
+  const sent: Array<Record<string, unknown>> = [];
+  // Old schema: PostgREST finds no function accepting p_error_detail and writes nothing.
+  const db = Object.assign(Object.create(fx.db), {
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name === "finish_home_agent_step") {
+        sent.push(args);
+        if (args.p_error_detail !== undefined) return { data: null, error: { code: "PGRST202", message: "not found" } };
+      }
+      return fx.db.rpc(name, args);
+    },
+  }) as SupabaseClient;
+  const result = await executeRunStep(runId, ownerId, {
+    db, log: quiet,
+    runAgent: (async () => { throw new AgentValidationError("too long", "synopsis", "too_long"); }) as typeof runHomeAgent,
+  });
+  assert.equal(sent.length, 2);
+  assert.equal(sent[0].p_error_detail, "too_long@synopsis");
+  assert.equal(JSON.stringify(sent[1]).includes("p_error_detail"), false, "fallback omits the new argument");
+  assert.equal(fx.finished.length, 1, "exactly one write reaches the database");
+  assert.equal(result.state, "retry_scheduled");
+});
+
+test("any other finish error is not retried", async () => {
+  const fx = fixture();
+  let finishCalls = 0;
+  const db = Object.assign(Object.create(fx.db), {
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name === "finish_home_agent_step") { finishCalls++; return { data: null, error: { code: "57014", message: "x" } }; }
+      return fx.db.rpc(name, args);
+    },
+  }) as SupabaseClient;
+  await assert.rejects(executeRunStep(runId, ownerId, {
+    db, log: quiet, runAgent: (async () => { throw new AgentValidationError("x", "title", "empty"); }) as typeof runHomeAgent,
+  }));
+  assert.equal(finishCalls, 1);
+});

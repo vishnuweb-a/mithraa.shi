@@ -157,7 +157,7 @@ export async function executeRunStep(
   const error = failure ?? { code: "agent_unexpected_error", retryable: false, retryAfterSeconds: null };
   // Failed attempts still spend tokens; the DB adds them to the step's usage.
   const usage = attemptUsage(calls);
-  const { data: committed, error: finishError } = await db.rpc("finish_home_agent_step", {
+  const failed = {
     p_step_id: lease.step_id,
     p_lease_token: lease.lease_token,
     p_outcome: "failed",
@@ -170,7 +170,13 @@ export async function executeRunStep(
     p_input_tokens: usage.inputTokens,
     p_output_tokens: usage.outputTokens,
     p_usage_source: usage.source,
-  });
+  };
+  let { data: committed, error: finishError } = await db.rpc("finish_home_agent_step", failed);
+  // shortcut: a schema without 20261028120000 has no p_error_detail (PGRST202, nothing written);
+  // retry without it so the failure is still recorded. Remove once that migration is everywhere.
+  if (finishError?.code === "PGRST202") {
+    ({ data: committed, error: finishError } = await db.rpc("finish_home_agent_step", { ...failed, p_error_detail: undefined }));
+  }
   if (finishError) throw translateDbError(finishError);
   return {
     state: !committed ? "lease_lost" : error.retryable ? "retry_scheduled" : "executed",

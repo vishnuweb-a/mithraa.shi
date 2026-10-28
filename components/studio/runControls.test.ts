@@ -99,7 +99,9 @@ test("failed and skipped agents get plain-language messages instead of raw codes
   assert.equal(stepMessage(agent("premise_scorer", "failed", "agent_validation", 3)),
     "Premise Scorer returned an invalid response and could not complete after 3 attempts.");
   assert.equal(stepMessage(agent("market_scout", "queued", "rate_limited", 1)),
-    "Market Scout was paused because the AI service is rate-limited. Retry 2 of 3 is scheduled.");
+    "Market Scout was paused because the AI service is rate-limited. Continue when the wait ends.");
+  assert.equal(stepMessage(agent("market_scout", "queued", "agent_validation", 1)),
+    "Market Scout returned an invalid response. Retry 2 of 3 is scheduled.");
   assert.equal(stepMessage(agent("ip_scout", "skipped", "prerequisite_failed")),
     "IP Scout did not run because an earlier agent failed.");
   assert.equal(stepMessage(agent("idea_capture", "failed", "some_new_code", 1)),
