@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { runControls, idleAdvanceMessage, cancelErrorMessage, retryRemaining } from "./runControls.ts";
+import { runControls, idleAdvanceMessage, cancelErrorMessage, retryRemaining, runNotice, stepMessage } from "./runControls.ts";
 import type { HomeProgress, HomeStep } from "./home-run-types.ts";
 
 const step = (status: HomeStep["status"], error_code: string | null = null): HomeStep =>
@@ -90,4 +90,37 @@ test("retry countdown decreases and unblocks Continue exactly at the deadline", 
 test("terminal run cannot execute another agent even after a retry deadline", () => {
   const p = run("failed", [{ ...step("queued", "rate_limited"), next_attempt_at: "2026-10-26T10:01:00Z" }]);
   assert.equal(runControls(p, false, Date.parse("2026-10-26T10:02:00Z")).canAdvance, false);
+});
+
+const agent = (agent_key: HomeStep["agent_key"], status: HomeStep["status"], error_code: string | null = null, attempts = 1): HomeStep =>
+  ({ ...step(status, error_code), id: agent_key, agent_key, attempts });
+
+test("failed and skipped agents get plain-language messages instead of raw codes", () => {
+  assert.equal(stepMessage(agent("premise_scorer", "failed", "agent_validation", 3)),
+    "Premise Scorer returned an invalid response and could not complete after 3 attempts.");
+  assert.equal(stepMessage(agent("market_scout", "queued", "rate_limited", 1)),
+    "Market Scout was paused because the AI service is rate-limited. Retry 2 of 3 is scheduled.");
+  assert.equal(stepMessage(agent("ip_scout", "skipped", "prerequisite_failed")),
+    "IP Scout did not run because an earlier agent failed.");
+  assert.equal(stepMessage(agent("idea_capture", "failed", "some_new_code", 1)),
+    "Idea Capture hit an unexpected error and could not complete after 1 attempt.");
+  assert.equal(stepMessage(agent("idea_capture", "completed")), null);
+  assert.equal(stepMessage(agent("ip_scout", "skipped")), null, "cancellation skips need no failure text");
+});
+
+test("a failed agent marks the run stopped, never complete, and still lets the server finalize it", () => {
+  const steps = [agent("idea_capture", "completed"), agent("market_scout", "completed"),
+    agent("premise_scorer", "failed", "agent_validation", 3), agent("ip_scout", "queued")];
+  const legacy = run("running", steps);
+  const controls = runControls(legacy, false);
+  assert.equal(controls.stopped, true);
+  assert.equal(controls.canAdvance, true);
+  assert.match(runNotice(legacy) ?? "", /Premise Scorer failed, so later agents will not run/);
+
+  const settled = run("partial", [...steps.slice(0, 3), agent("ip_scout", "skipped", "prerequisite_failed")]);
+  assert.equal(runControls(settled, false).canAdvance, false);
+  assert.equal(runControls(settled, false).stopped, false, "a terminal run needs no finalize button");
+  assert.match(runNotice(settled) ?? "", /Run stopped at Premise Scorer\. Completed results are kept/);
+  assert.equal(settled.steps.filter(s => s.status === "completed").length, 2, "count stays honest: 2/4");
+  assert.equal(runNotice(run("completed", [agent("idea_capture", "completed")])), null);
 });

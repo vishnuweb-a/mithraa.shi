@@ -5,13 +5,7 @@ import type { AgentKey } from "@/lib/ai/contracts";
 import { TERMINAL_RUN_STATUSES, idleAdvanceMessage, cancelErrorMessage } from "./runControls";
 import type { HomeProgress, HomeIdea, AgentOutputs } from "./home-run-types";
 export type { HomeProgress, HomeIdea, HomeStep, HomeRun } from "./home-run-types";
-
-export const LIVE_AGENTS: ReadonlyArray<{ key: AgentKey; name: string }> = [
-  { key: "idea_capture", name: "Idea Capture" },
-  { key: "market_scout", name: "Market Scout" },
-  { key: "premise_scorer", name: "Premise Scorer" },
-  { key: "ip_scout", name: "IP Scout" },
-];
+export { LIVE_AGENTS } from "./runControls";
 
 const KEY = "mithraa.home.live-run.v1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

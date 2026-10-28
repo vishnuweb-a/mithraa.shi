@@ -1,7 +1,7 @@
 import { test, beforeEach, after } from "node:test";
 import assert from "node:assert/strict";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { AgentExecution } from "./contracts.ts";
+import { AgentValidationError, type AgentExecution, type AgentKey } from "./contracts.ts";
 import { HomeRequestError } from "./home-http.ts";
 import { executeRunStep } from "./home-runner.ts";
 import { runHomeAgent } from "./agents.ts";
@@ -27,7 +27,8 @@ after(() => {
 function fixture(options: {
   mode?: string; pinnedModel?: unknown; leaseRunId?: string;
   preflightError?: boolean; ownerFound?: boolean; leaseGranted?: boolean;
-  finishAccepted?: boolean;
+  finishAccepted?: boolean; agentKey?: AgentKey; cancelRequested?: boolean;
+  steps?: Array<Record<string, unknown>>;
 } = {}) {
   const finished: Array<Record<string, unknown>> = [];
   const calls: string[] = [];
@@ -36,6 +37,7 @@ function fixture(options: {
     id: runId, owner_id: ownerId, idea_id: ideaId, idea_version: 1,
     status: "queued", model_mode: options.mode ?? "pinned",
     request_options: { pinnedModel: options.pinnedModel ?? model },
+    cancel_requested_at: options.cancelRequested ? "2026-10-28T10:00:00Z" : null,
   };
   const records: Record<string, unknown> = {
     agent_runs: options.ownerFound === false ? null : storedRun,
@@ -62,6 +64,11 @@ function fixture(options: {
           return { data: records[table], error: null };
         },
         async maybeSingle() { return { data: records[table], error: null }; },
+        // List reads (agent_steps for a run) are awaited on the builder itself.
+        then(resolve: (value: unknown) => unknown) {
+          return Promise.resolve({ data: options.steps ?? [{ id: stepId, agent_key: "idea_capture", status: "running" }],
+            error: null }).then(resolve);
+        },
       };
       return q;
     },
@@ -71,7 +78,7 @@ function fixture(options: {
         return { data: options.leaseGranted === false ? [] : [{
           step_id: stepId,
           claimed_run_id: options.leaseRunId ?? runId,
-          agent_key: "idea_capture", lease_token: token, attempt_number: 1,
+          agent_key: options.agentKey ?? "idea_capture", lease_token: token, attempt_number: 1,
         }], error: null };
       }
       if (name === "finish_home_agent_step") {
@@ -208,4 +215,130 @@ test("cross-owner lookups cannot reach the privileged claim operation", async ()
   assert.deepEqual(fx.runFilters, [["id", runId], ["owner_id", ownerId]],
     "The privileged run lookup must filter by both run ID and verified session owner ID");
   assert.equal(fx.calls.includes("rpc:claim_home_agent_step"), false);
+});
+
+const ideaOut = agentResult.output;
+const marketOut = {
+  audience: "Regional mystery audience", comparableTitles: ["Example"],
+  insights: [{ claim: "No audience data found", sourceUrl: null, evidenceStatus: "unavailable" }],
+  limitations: ["Unverified"],
+};
+const premiseOut = {
+  overall: 72, suggestions: ["Sharpen the ending"], dimensions: [
+    { category: "Conflict", score: 70, explanation: "Clear" },
+    { category: "Character", score: 74, explanation: "Grounded" },
+    { category: "Originality", score: 72, explanation: "Fresh setting" },
+  ],
+};
+const done = (agent_key: string, output: unknown) => ({ id: agent_key, agent_key, status: "completed", output });
+const leased = (agent_key: string, extra: Record<string, unknown> = {}) =>
+  ({ id: stepId, agent_key, status: "running", output: null, ...extra });
+const quiet = () => undefined;
+
+test("a downstream agent never calls Groq when an earlier agent failed or has no output", async () => {
+  for (const steps of [
+    [done("idea_capture", ideaOut), { id: "m", agent_key: "market_scout", status: "failed", output: null }, leased("premise_scorer")],
+    [done("idea_capture", ideaOut), done("market_scout", null), leased("premise_scorer")],
+    [leased("premise_scorer")],
+  ]) {
+    const fx = fixture({ agentKey: "premise_scorer", steps });
+    let calls = 0;
+    const result = await executeRunStep(runId, ownerId, {
+      db: fx.db, log: quiet, runAgent: (async () => { calls++; return agentResult; }) as typeof runHomeAgent,
+    });
+    assert.equal(calls, 0);
+    assert.equal(result.errorCode, "prerequisite_missing");
+    assert.equal(fx.finished[0].p_retryable, false, "a missing prerequisite is never retried");
+  }
+});
+
+test("corrupt persisted upstream output stops the run instead of retrying a paid call", async () => {
+  const fx = fixture({ agentKey: "market_scout", steps: [done("idea_capture", { title: "Only a title" }), leased("market_scout")] });
+  let calls = 0;
+  const result = await executeRunStep(runId, ownerId, {
+    db: fx.db, log: quiet, runAgent: (async () => { calls++; return agentResult; }) as typeof runHomeAgent,
+  });
+  assert.equal(calls, 0);
+  assert.equal(result.errorCode, "prerequisite_invalid");
+  assert.equal(fx.finished[0].p_retryable, false);
+});
+
+test("each agent receives the validated, persisted outputs of every earlier agent", async () => {
+  const fx = fixture({ agentKey: "ip_scout", steps: [
+    done("idea_capture", ideaOut), done("market_scout", marketOut), done("premise_scorer", premiseOut), leased("ip_scout"),
+  ] });
+  let seen: unknown;
+  await executeRunStep(runId, ownerId, {
+    db: fx.db, log: quiet,
+    runAgent: (async (key, _input, opts) => { assert.equal(key, "ip_scout"); seen = opts?.preceding; return agentResult; }) as typeof runHomeAgent,
+  });
+  assert.deepEqual(seen, { idea_capture: ideaOut, market_scout: marketOut, premise_scorer: premiseOut });
+});
+
+test("a validation failure stores its path for the corrective retry and counts its tokens", async () => {
+  const fx = fixture({ agentKey: "premise_scorer", steps: [
+    done("idea_capture", ideaOut), done("market_scout", marketOut), leased("premise_scorer"),
+  ] });
+  const logs: Array<Record<string, unknown>> = [];
+  const result = await executeRunStep(runId, ownerId, {
+    db: fx.db, log: (r) => logs.push(r),
+    runAgent: (async (_key, _input, opts) => {
+      opts?.onCall?.({ kind: "generate", provider: "groq", model, requestId: "req_abc", finishReason: "stop",
+        usage: { inputTokens: 100, outputTokens: 40, source: "provider" }, durationMs: 5 });
+      throw new AgentValidationError("too long", "dimensions[1].explanation", "too_long");
+    }) as typeof runHomeAgent,
+  });
+  assert.equal(result.state, "retry_scheduled");
+  assert.equal(result.errorCode, "agent_validation");
+  assert.equal(fx.finished[0].p_error_detail, "too_long@dimensions[1].explanation");
+  assert.equal(fx.finished[0].p_input_tokens, 100);
+  assert.equal(fx.finished[0].p_output_tokens, 40);
+  assert.equal(fx.finished[0].p_provider, "groq");
+  assert.deepEqual(logs[0], {
+    event: "home_agent_attempt", run_id: runId, agent_key: "premise_scorer", attempt_number: 1,
+    outcome: "failed", error_category: "agent_validation", retryable: true,
+    validation_failure_path: "dimensions[1].explanation", validation_failure_code: "too_long",
+    model, provider_request_ids: ["req_abc"], response_finish_reasons: ["stop"],
+    input_tokens: 100, output_token_usage: 40, duration_ms: logs[0].duration_ms,
+  });
+  assert.ok(!JSON.stringify(logs).includes("impossible voyage"), "diagnostics never include the story");
+});
+
+test("the next attempt receives the previous validator detail", async () => {
+  const fx = fixture({ steps: [leased("idea_capture", { error_message: "too_long@synopsis" })] });
+  let issue: unknown;
+  await executeRunStep(runId, ownerId, {
+    db: fx.db, log: quiet, runAgent: (async (_k, _i, opts) => { issue = opts?.previousIssue; return agentResult; }) as typeof runHomeAgent,
+  });
+  assert.equal(issue, "too_long@synopsis");
+});
+
+test("cancellation requested mid-step stops any further model request", async () => {
+  const fx = fixture({ cancelRequested: true });
+  let calls = 0;
+  const result = await executeRunStep(runId, ownerId, {
+    db: fx.db, log: quiet,
+    runAgent: (async (_k, _i, opts) => { await opts?.beforeCall?.(); calls++; return agentResult; }) as typeof runHomeAgent,
+  });
+  assert.equal(calls, 0);
+  assert.equal(result.errorCode, "run_cancelled");
+  assert.equal(fx.finished[0].p_retryable, false);
+});
+
+test("duplicate clicks: only the request holding the lease reaches Groq", async () => {
+  const fx = fixture();
+  let granted = false;
+  const db = Object.assign(Object.create(fx.db), {
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name === "claim_home_agent_step" && granted) return { data: [], error: null };
+      if (name === "claim_home_agent_step") granted = true;
+      return fx.db.rpc(name, args);
+    },
+  }) as SupabaseClient;
+  let calls = 0;
+  const runAgent = (async () => { calls++; return agentResult; }) as typeof runHomeAgent;
+  const results = await Promise.all([1, 2].map(() => executeRunStep(runId, ownerId, { db, log: quiet, runAgent })));
+  assert.equal(calls, 1);
+  assert.deepEqual(results.map((r) => r.state).sort(), ["executed", "idle"]);
+  assert.equal(fx.finished.length, 1);
 });

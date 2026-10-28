@@ -25,6 +25,20 @@ export interface ModelResult<T> {
   data: T;
   usage: TokenUsage;
   model: string;
+  /** Diagnostics only; never content. */
+  requestId?: string | null;
+  finishReason?: string | null;
+}
+
+/** Content-free metadata for one provider request, successful or not. */
+export interface ProviderCall {
+  kind: "research" | "generate";
+  provider: string;
+  model: string;
+  requestId: string | null;
+  finishReason: string | null;
+  usage: TokenUsage;
+  durationMs: number;
 }
 
 export interface ModelProvider {
@@ -35,6 +49,7 @@ export interface ModelProvider {
     user: string;
     schemaName: string;
     schema: Record<string, unknown>;
+    maxOutputTokens?: number;
     signal?: AbortSignal;
   }): Promise<ModelResult<unknown>>;
   research(input: {
@@ -105,9 +120,14 @@ export interface AgentExecution<K extends AgentKey = AgentKey> {
 }
 
 export class AgentValidationError extends Error {
-  constructor(message: string) {
+  /** Field path and issue code come from our validator, never from model text. */
+  readonly path: string;
+  readonly issue: string;
+  constructor(message: string, path = "", issue = "invalid") {
     super(message);
     this.name = "AgentValidationError";
+    this.path = path;
+    this.issue = issue;
   }
 }
 

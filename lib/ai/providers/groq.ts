@@ -13,27 +13,35 @@ const TIMEOUT_MS = 25_000;
 export class ProviderRequestError extends Error {
   readonly status: number | null;
   readonly retryAfterSeconds: number | null;
-  /** Machine-readable Groq error code only; never expose model/provider error messages. */
+  /** Machine-readable Groq (or local output_*) code only; never expose model/provider error messages. */
   readonly providerCode: string | null;
+  /** Content-free metadata when a response was received; its tokens may already be billed. */
+  readonly response: { requestId: string | null; finishReason: string | null; usage: TokenUsage } | null;
   constructor(
     message: string,
     status: number | null = null,
     retryAfterSeconds: number | null = null,
     providerCode: string | null = null,
+    response: ProviderRequestError["response"] = null,
   ) {
     super(message);
     this.name = "ProviderRequestError";
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
     this.providerCode = providerCode;
+    this.response = response;
   }
 }
 
 type GroqResponse = {
+  id?: unknown;
   model?: unknown;
-  choices?: Array<{ message?: { content?: unknown } }>;
+  choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }>;
   usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
 };
+
+const SAFE_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const safeId = (value: unknown) => typeof value === "string" && SAFE_ID.test(value) ? value : null;
 
 function usageFrom(raw: GroqResponse): TokenUsage {
   const a = raw.usage?.prompt_tokens;
@@ -62,12 +70,14 @@ export class GroqProvider implements ModelProvider {
     this.doFetch = options.fetchImpl ?? fetch;
   }
 
-  private async request(body: Record<string, unknown>, signal?: AbortSignal): Promise<GroqResponse> {
+  private async request(
+    body: Record<string, unknown>, signal?: AbortSignal,
+  ): Promise<{ raw: GroqResponse; requestId: string | null }> {
     if (typeof window !== "undefined") {
       throw new ProviderRequestError("Groq can only be accessed by the server");
     }
     if (!this.key || !this.key.trim()) {
-      throw new ProviderRequestError("GROQ_API_KEY is not configured on the server");
+      throw new ProviderRequestError("GROQ_API_KEY is not configured on the server", null, null, "missing_api_key");
     }
 
     const deadline = AbortSignal.timeout(TIMEOUT_MS);
@@ -93,13 +103,15 @@ export class GroqProvider implements ModelProvider {
       throw new ProviderRequestError("Groq network request failed");
     }
 
+    const requestId = safeId(response.headers.get("x-request-id"));
+    const meta = { requestId, finishReason: null, usage: usageFrom({}) };
     if (!response.ok) {
       const retry = retryAfterSeconds(response.headers.get("retry-after"));
-      if (response.status === 429) throw new ProviderRequestError("Groq rate limit exceeded", 429, retry);
+      if (response.status === 429) throw new ProviderRequestError("Groq rate limit exceeded", 429, retry, null, meta);
       if (response.status === 401 || response.status === 403) {
-        throw new ProviderRequestError("Groq authorization failed; check server model access", response.status);
+        throw new ProviderRequestError("Groq authorization failed; check server model access", response.status, null, null, meta);
       }
-      if (response.status >= 500) throw new ProviderRequestError("Groq temporarily unavailable", response.status, retry);
+      if (response.status >= 500) throw new ProviderRequestError("Groq temporarily unavailable", response.status, retry, null, meta);
 
       // Invalid request and transient schema validation errors can both be HTTP 400.
       // Only accept a short machine code; never forward the full provider message,
@@ -124,7 +136,7 @@ export class GroqProvider implements ModelProvider {
         if (deadline.aborted) throw new ProviderRequestError("Groq request timed out");
         // Invalid error payloads must not become client-visible text.
       }
-      throw new ProviderRequestError("Groq request rejected", response.status, null, providerCode);
+      throw new ProviderRequestError("Groq request rejected", response.status, null, providerCode, meta);
     }
 
     const size = Number(response.headers.get("content-length"));
@@ -141,8 +153,10 @@ export class GroqProvider implements ModelProvider {
       if (deadline.aborted) throw new ProviderRequestError("Groq request timed out");
       throw new ProviderRequestError("Groq returned an invalid response");
     }
-    if (!raw || typeof raw !== "object") throw new ProviderRequestError("Groq response missing object");
-    return raw as GroqResponse;
+    if (!raw || typeof raw !== "object") {
+      throw new ProviderRequestError("Groq response missing object", null, null, "output_empty", meta);
+    }
+    return { raw: raw as GroqResponse, requestId: requestId ?? safeId((raw as GroqResponse).id) };
   }
 
   async generateStructured(input: {
@@ -151,9 +165,10 @@ export class GroqProvider implements ModelProvider {
     user: string;
     schemaName: string;
     schema: Record<string, unknown>;
+    maxOutputTokens?: number;
     signal?: AbortSignal;
   }): Promise<ModelResult<unknown>> {
-    const res = await this.request({
+    const { raw: res, requestId } = await this.request({
       model: input.model,
       messages: [
         { role: "system", content: input.system },
@@ -164,21 +179,31 @@ export class GroqProvider implements ModelProvider {
         json_schema: { name: input.schemaName, strict: true, schema: input.schema },
       },
       temperature: 0.2,
-      max_completion_tokens: 2400,
+      max_completion_tokens: input.maxOutputTokens ?? 2400,
       reasoning_effort: "low",
       stream: false,
     }, input.signal);
 
-    const content = res.choices?.[0]?.message?.content;
-    if (typeof content !== "string") throw new ProviderRequestError("Groq structured output was empty");
+    const choice = res.choices?.[0];
+    const finishReason = safeId(choice?.finish_reason);
+    const meta = { requestId, finishReason, usage: usageFrom(res) };
+    // A token-limit cut leaves partial JSON: report truncation, not a bad model answer.
+    if (finishReason === "length") {
+      throw new ProviderRequestError("Groq structured output was truncated", null, null, "output_truncated", meta);
+    }
+    const content = choice?.message?.content;
+    if (typeof content !== "string" || !content.trim()) {
+      throw new ProviderRequestError("Groq structured output was empty", null, null, "output_empty", meta);
+    }
     let value: unknown;
     try { value = JSON.parse(content); }
-    catch { throw new ProviderRequestError("Groq structured output is not JSON"); }
-    return { data: value, model: typeof res.model === "string" ? res.model : input.model, usage: usageFrom(res) };
+    catch { throw new ProviderRequestError("Groq structured output is not JSON", null, null, "output_not_json", meta); }
+    return { data: value, model: typeof res.model === "string" ? res.model : input.model,
+      usage: meta.usage, requestId, finishReason };
   }
 
   async research(input: { model: string; query: string; signal?: AbortSignal }): Promise<ModelResult<string>> {
-    const res = await this.request({
+    const { raw: res, requestId } = await this.request({
       model: input.model,
       messages: [
         {
@@ -193,10 +218,13 @@ export class GroqProvider implements ModelProvider {
       reasoning_effort: "low",
       stream: false,
     }, input.signal);
+    const finishReason = safeId(res.choices?.[0]?.finish_reason);
     const content = res.choices?.[0]?.message?.content;
     if (typeof content !== "string" || !content.trim()) {
-      throw new ProviderRequestError("Groq browser search returned no evidence");
+      throw new ProviderRequestError("Groq browser search returned no evidence", null, null, "research_empty",
+        { requestId, finishReason, usage: usageFrom(res) });
     }
-    return { data: content.slice(0, 16_000), model: typeof res.model === "string" ? res.model : input.model, usage: usageFrom(res) };
+    return { data: content.slice(0, 16_000), model: typeof res.model === "string" ? res.model : input.model,
+      usage: usageFrom(res), requestId, finishReason };
   }
 }

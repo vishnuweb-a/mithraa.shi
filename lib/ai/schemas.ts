@@ -2,10 +2,20 @@ import {
   AgentValidationError, type AgentKey, type AgentOutputs, type MarketInsight,
 } from "./contracts.ts";
 
-const s = { type: "string" };
-const n = { type: "number" };
-const b = { type: "boolean" };
-const strings = { type: "array", items: s };
+/** Single source for limits: the validator enforces them and the schema tells the model. */
+const MAX = {
+  title: 200, logline: 1000, synopsis: 3500, genre: 150, language: 80, item: 500,
+  audience: 1200, claim: 750, url: 2048, category: 100, explanation: 700, items: 30,
+} as const;
+
+const text = (max: number) => ({ type: "string", description: `Non-empty plain text, at most ${max} characters.` });
+const list = (items: Record<string, unknown>, note = "") =>
+  ({ type: "array", items, description: `${note}At most ${MAX.items} items.` });
+const texts = list(text(MAX.item));
+const scoreField = {
+  type: "number",
+  description: "Score from 0 (weakest) to 100 (strongest). Use the 0-100 scale, never 0-10.",
+};
 function shape(properties: Record<string, unknown>) {
   return {
     type: "object", properties, required: Object.keys(properties), additionalProperties: false,
@@ -13,53 +23,60 @@ function shape(properties: Record<string, unknown>) {
 }
 export const OUTPUT_SCHEMAS: Record<AgentKey, Record<string, unknown>> = {
   idea_capture: shape({
-    title: s, logline: s, synopsis: s, genre: s, tone: strings,
-    themes: strings, characters: strings, language: s,
+    title: text(MAX.title), logline: text(MAX.logline), synopsis: text(MAX.synopsis),
+    genre: text(MAX.genre), tone: texts, themes: texts, characters: texts, language: text(MAX.language),
   }),
   market_scout: shape({
-    audience: s, comparableTitles: strings,
-    insights: { type: "array", items: shape({
-      claim: s, sourceUrl: { type: ["string", "null"] },
+    audience: text(MAX.audience), comparableTitles: texts,
+    insights: list(shape({
+      claim: text(MAX.claim),
+      sourceUrl: { type: ["string", "null"], description: "An exact HTTPS URL copied from the evidence, or null." },
       evidenceStatus: { type: "string", enum: ["sourced", "unverified", "unavailable"] },
-    }) },
-    limitations: strings,
+    })),
+    limitations: texts,
   }),
   premise_scorer: shape({
-    overall: n, dimensions: { type: "array", items: shape({
-      category: s, score: n, explanation: s,
-    }) }, suggestions: strings,
+    overall: scoreField,
+    dimensions: list(shape({
+      category: text(MAX.category), score: scoreField, explanation: text(MAX.explanation),
+    }), "Between 3 and 6 scoring dimensions. "),
+    suggestions: texts,
   }),
   ip_scout: shape({
     status: { type: "string", enum: ["flagged", "needs_review", "no_reference_detected"] },
-    concerns: strings, rightsToVerify: strings, legalClearanceGranted: b,
+    concerns: texts, rightsToVerify: texts,
+    legalClearanceGranted: { type: "boolean", description: "Always false." },
   }),
 };
 
-function record(value: unknown, name: string): Record<string, unknown> {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    throw new AgentValidationError(name + " must be an object");
-  }
+function fail(path: string, issue: string, detail: string): never {
+  throw new AgentValidationError(path + " " + detail, path, issue);
+}
+function record(value: unknown, path: string): Record<string, unknown> {
+  if (value === undefined || value === null) fail(path, "missing", "is required");
+  if (typeof value !== "object" || Array.isArray(value)) fail(path, "wrong_type", "must be an object");
   return value as Record<string, unknown>;
 }
-function string(value: unknown, field: string, max = 4000): string {
-  if (typeof value !== "string" || !value.trim() || value.length > max) {
-    throw new AgentValidationError(field + " must be nonempty text within size limits");
-  }
+function string(value: unknown, path: string, max: number): string {
+  if (value === undefined || value === null) fail(path, "missing", "is required");
+  if (typeof value !== "string") fail(path, "wrong_type", "must be text");
+  if (!value.trim()) fail(path, "empty", "must not be empty");
+  if (value.length > max) fail(path, "too_long", `must be at most ${max} characters`);
   return value.trim();
 }
-function array(value: unknown, field: string): unknown[] {
-  if (!Array.isArray(value) || value.length > 30) {
-    throw new AgentValidationError(field + " must be an array (up to 30 items)");
-  }
-  return value as unknown[];
+function array(value: unknown, path: string): unknown[] {
+  if (value === undefined || value === null) fail(path, "missing", "is required");
+  if (!Array.isArray(value)) fail(path, "wrong_type", "must be an array");
+  if (value.length > MAX.items) fail(path, "too_many", `must have at most ${MAX.items} items`);
+  return value;
 }
-function stringArray(value: unknown, field: string): string[] {
-  return array(value, field).map((v, i) => string(v, field + "[" + i + "]", 500));
+function stringArray(value: unknown, path: string): string[] {
+  return array(value, path).map((v, i) => string(v, `${path}[${i}]`, MAX.item));
 }
-function score(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 100) {
-    throw new AgentValidationError(field + " must be between 0 and 100");
-  }
+function score(value: unknown, path: string): number {
+  if (value === undefined || value === null) fail(path, "missing", "is required");
+  if (typeof value !== "number" || !Number.isFinite(value)) fail(path, "wrong_type", "must be a number");
+  if (value < 0 || value > 100) fail(path, "out_of_range", "must be between 0 and 100");
   return value;
 }
 function httpsUrl(value: string): boolean {
@@ -86,39 +103,41 @@ function evidenceUrls(evidence: string): Set<string> {
 export function validateOutput<K extends AgentKey>(
   key: K, raw: unknown, researchEvidence = "",
 ): AgentOutputs[K] {
-  const obj = record(raw, key);
+  const obj = record(raw, "$");
 
   if (key === "idea_capture") {
     return {
-      title: string(obj.title, "title", 200),
-      logline: string(obj.logline, "logline", 1000),
-      synopsis: string(obj.synopsis, "synopsis", 3500),
-      genre: string(obj.genre, "genre", 150),
+      title: string(obj.title, "title", MAX.title),
+      logline: string(obj.logline, "logline", MAX.logline),
+      synopsis: string(obj.synopsis, "synopsis", MAX.synopsis),
+      genre: string(obj.genre, "genre", MAX.genre),
       tone: stringArray(obj.tone, "tone"),
       themes: stringArray(obj.themes, "themes"),
       characters: stringArray(obj.characters, "characters"),
-      language: string(obj.language, "language", 80),
+      language: string(obj.language, "language", MAX.language),
     } as AgentOutputs[K];
   }
 
   if (key === "market_scout") {
     const urls = evidenceUrls(researchEvidence);
-    const insights: MarketInsight[] = array(obj.insights, "insights").map((value) => {
-      const item = record(value, "market insight");
-      const claim = string(item.claim, "claim", 750);
-      const sourceUrl = item.sourceUrl === null ? null : string(item.sourceUrl, "sourceUrl", 2048);
-      const evidenceStatus = item.evidenceStatus;
-      if (evidenceStatus !== "sourced" && evidenceStatus !== "unverified" && evidenceStatus !== "unavailable") {
-        throw new AgentValidationError("Unsupported evidence status");
+    const insights: MarketInsight[] = array(obj.insights, "insights").map((value, i) => {
+      const path = `insights[${i}]`;
+      const item = record(value, path);
+      const claim = string(item.claim, path + ".claim", MAX.claim);
+      const status = item.evidenceStatus;
+      if (status !== "sourced" && status !== "unverified" && status !== "unavailable") {
+        fail(path + ".evidenceStatus", "invalid_enum", "is not a supported evidence status");
       }
-      if (sourceUrl !== null && !httpsUrl(sourceUrl)) throw new AgentValidationError("Invalid evidence URL");
-      if (evidenceStatus === "sourced" && (!sourceUrl || !urls.has(sourceUrl))) {
-        throw new AgentValidationError("Sourced market claim lacks a URL present in retrieved evidence");
-      }
-      return { claim, sourceUrl, evidenceStatus };
+      const url = item.sourceUrl === null || item.sourceUrl === undefined
+        ? null : string(item.sourceUrl, path + ".sourceUrl", MAX.url);
+      // Keep a URL only if it appears verbatim in the retrieved evidence. An
+      // unsupported "sourced" claim is demoted, never kept and never rejected
+      // into a retry loop: the claim stays but is labelled unverified.
+      const sourceUrl = url !== null && urls.has(url) ? url : null;
+      return { claim, sourceUrl, evidenceStatus: status === "sourced" && !sourceUrl ? "unverified" : status };
     });
     return {
-      audience: string(obj.audience, "audience", 1200),
+      audience: string(obj.audience, "audience", MAX.audience),
       comparableTitles: stringArray(obj.comparableTitles, "comparableTitles"),
       insights,
       limitations: stringArray(obj.limitations, "limitations"),
@@ -126,12 +145,14 @@ export function validateOutput<K extends AgentKey>(
   }
 
   if (key === "premise_scorer") {
-    const dimensions = array(obj.dimensions, "dimensions").map((v) => {
-      const dim = record(v, "score dimension");
-      return { category: string(dim.category, "category", 100),
-        score: score(dim.score, "score"), explanation: string(dim.explanation, "explanation", 700) };
+    const dimensions = array(obj.dimensions, "dimensions").map((v, i) => {
+      const path = `dimensions[${i}]`;
+      const dim = record(v, path);
+      return { category: string(dim.category, path + ".category", MAX.category),
+        score: score(dim.score, path + ".score"),
+        explanation: string(dim.explanation, path + ".explanation", MAX.explanation) };
     });
-    if (dimensions.length < 3) throw new AgentValidationError("Scorecard needs three or more dimensions");
+    if (dimensions.length < 3) fail("dimensions", "too_few", "needs three or more scoring dimensions");
     return {
       overall: score(obj.overall, "overall"),
       dimensions, suggestions: stringArray(obj.suggestions, "suggestions"),
@@ -140,10 +161,10 @@ export function validateOutput<K extends AgentKey>(
 
   if (key === "ip_scout") {
     if (obj.status !== "flagged" && obj.status !== "needs_review" && obj.status !== "no_reference_detected") {
-      throw new AgentValidationError("Invalid IP review state");
+      fail("status", obj.status === undefined ? "missing" : "invalid_enum", "is not a valid IP review state");
     }
     if (obj.legalClearanceGranted !== false) {
-      throw new AgentValidationError("Agents must never grant legal clearance");
+      fail("legalClearanceGranted", "forbidden_value", "must be false; agents never grant legal clearance");
     }
     return {
       status: obj.status, concerns: stringArray(obj.concerns, "concerns"),
