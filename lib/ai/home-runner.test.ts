@@ -13,28 +13,34 @@ const stepId = "f3000000-0000-4000-8000-000000000004";
 const token = "f3000000-0000-4000-8000-000000000005";
 const model = "openai/gpt-oss-20b";
 
+const secondOwnerId = "f3000000-0000-4000-8000-000000000007";
+const thirdUserId = "f3000000-0000-4000-8000-000000000008";
 const originalApprovedUser = process.env.HOME_GROQ_TEST_USER_ID;
+const originalAllowlist = process.env.HOME_GROQ_ALLOWED_USER_IDS;
 beforeEach(() => {
   // Every normal runner test uses an approved session. The denial test below
   // deliberately clears or changes this variable after beforeEach.
   process.env.HOME_GROQ_TEST_USER_ID = ownerId;
+  delete process.env.HOME_GROQ_ALLOWED_USER_IDS;
 });
 after(() => {
   if (originalApprovedUser === undefined) delete process.env.HOME_GROQ_TEST_USER_ID;
   else process.env.HOME_GROQ_TEST_USER_ID = originalApprovedUser;
+  if (originalAllowlist === undefined) delete process.env.HOME_GROQ_ALLOWED_USER_IDS;
+  else process.env.HOME_GROQ_ALLOWED_USER_IDS = originalAllowlist;
 });
 
 function fixture(options: {
   mode?: string; pinnedModel?: unknown; leaseRunId?: string;
   preflightError?: boolean; ownerFound?: boolean; leaseGranted?: boolean;
   finishAccepted?: boolean; agentKey?: AgentKey; cancelRequested?: boolean;
-  steps?: Array<Record<string, unknown>>;
+  steps?: Array<Record<string, unknown>>; owner?: string;
 } = {}) {
   const finished: Array<Record<string, unknown>> = [];
   const calls: string[] = [];
   const runFilters: Array<[string, unknown]> = [];
   const storedRun = {
-    id: runId, owner_id: ownerId, idea_id: ideaId, idea_version: 1,
+    id: runId, owner_id: options.owner ?? ownerId, idea_id: ideaId, idea_version: 1,
     status: "queued", model_mode: options.mode ?? "pinned",
     request_options: { pinnedModel: options.pinnedModel ?? model },
     cancel_requested_at: options.cancelRequested ? "2026-10-28T10:00:00Z" : null,
@@ -215,6 +221,46 @@ test("cross-owner lookups cannot reach the privileged claim operation", async ()
   assert.deepEqual(fx.runFilters, [["id", runId], ["owner_id", ownerId]],
     "The privileged run lookup must filter by both run ID and verified session owner ID");
   assert.equal(fx.calls.includes("rpc:claim_home_agent_step"), false);
+});
+
+test("both allowlisted users execute their own runs; a third user is denied before any DB work", async () => {
+  process.env.HOME_GROQ_ALLOWED_USER_IDS = `${ownerId}, ${secondOwnerId}`;
+  delete process.env.HOME_GROQ_TEST_USER_ID;
+  for (const owner of [ownerId, secondOwnerId]) {
+    const fx = fixture({ owner });
+    const result = await executeRunStep(runId, owner, {
+      db: fx.db, runAgent: (async () => agentResult) as typeof runHomeAgent,
+    });
+    assert.equal(result.outcome, "completed");
+    assert.deepEqual(fx.runFilters, [["id", runId], ["owner_id", owner]]);
+  }
+  const fx = fixture({ owner: thirdUserId });
+  let providerCalls = 0;
+  await assert.rejects(
+    executeRunStep(runId, thirdUserId, {
+      db: fx.db, runAgent: (async () => { providerCalls++; return agentResult; }) as typeof runHomeAgent,
+    }),
+    (error: unknown) => error instanceof HomeRequestError && error.status === 403 &&
+      error.code === "agent_execution_restricted",
+  );
+  assert.deepEqual(fx.calls, []);
+  assert.equal(providerCalls, 0);
+});
+
+test("one approved user cannot execute another approved user's run", async () => {
+  process.env.HOME_GROQ_ALLOWED_USER_IDS = `${ownerId},${secondOwnerId}`;
+  // The run belongs to ownerId; the owner-scoped lookup finds nothing for secondOwnerId.
+  const fx = fixture({ ownerFound: false });
+  let providerCalls = 0;
+  await assert.rejects(
+    executeRunStep(runId, secondOwnerId, {
+      db: fx.db, runAgent: (async () => { providerCalls++; return agentResult; }) as typeof runHomeAgent,
+    }),
+    (error: unknown) => error instanceof HomeRequestError && error.code === "run_not_found",
+  );
+  assert.deepEqual(fx.runFilters, [["id", runId], ["owner_id", secondOwnerId]]);
+  assert.deepEqual(fx.calls, ["read:agent_runs"], "no claim, cancel or finish RPC for a foreign run");
+  assert.equal(providerCalls, 0);
 });
 
 const ideaOut = agentResult.output;
