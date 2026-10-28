@@ -3,7 +3,7 @@
  * No credentials, Next.js dependency, Supabase client, or server-only import.
  */
 import {
-  AGENT_KEYS, AgentValidationError, type AgentExecution, type AgentKey, type AgentOutputs,
+  AGENT_KEYS, AgentValidationError, combineUsage, type AgentExecution, type AgentKey, type AgentOutputs,
   type ProviderCall, type RoutingMode, type TokenUsage,
 } from "./contracts.ts";
 import { validateOutput } from "./schemas.ts";
@@ -102,11 +102,7 @@ export function precedingOutputs(agent: AgentKey, steps: Array<Record<string, un
 
 /** Tokens spent across every call in one attempt, including failed ones. */
 export function attemptUsage(calls: ProviderCall[]): TokenUsage {
-  const known = calls.filter((c) => c.usage.source === "provider");
-  const sum = (field: "inputTokens" | "outputTokens") =>
-    known.length ? known.reduce((total, c) => total + (c.usage[field] ?? 0), 0) : null;
-  return { inputTokens: sum("inputTokens"), outputTokens: sum("outputTokens"),
-    source: known.length && known.length === calls.length ? "provider" : "unavailable" };
+  return combineUsage(...calls.map((c) => c.usage));
 }
 
 /** One structured, content-free log record per attempt. No prompts, outputs or credentials. */

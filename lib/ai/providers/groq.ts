@@ -49,7 +49,8 @@ function usageFrom(raw: GroqResponse): TokenUsage {
   const inputTokens = typeof a === "number" && Number.isSafeInteger(a) && a >= 0 ? a : null;
   const outputTokens = typeof b === "number" && Number.isSafeInteger(b) && b >= 0 ? b : null;
   return { inputTokens, outputTokens,
-    source: inputTokens === null || outputTokens === null ? "unavailable" : "provider" };
+    source: inputTokens !== null && outputTokens !== null ? "provider"
+      : inputTokens === null && outputTokens === null ? "unavailable" : "estimated" };
 }
 
 function retryAfterSeconds(header: string | null): number | null {

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { runHomeAgent } from "./agents.ts";
 import {
-  AgentValidationError, type AgentKey, type IdeaInput, type ModelProvider,
+  AgentValidationError, combineUsage, type AgentKey, type IdeaInput, type ModelProvider,
 } from "./contracts.ts";
 import { GroqProvider, ProviderRequestError } from "./providers/groq.ts";
 import { selectGroqModel } from "./router.ts";
@@ -77,6 +77,31 @@ test("Market Scout aggregates search and extraction token usage", async () => {
   assert.equal(result.usage.inputTokens, 109);
   assert.equal(result.usage.outputTokens, 55);
   assert.match(result.evidence ?? "", /No verifiable/);
+});
+
+test("Market Scout keeps known tokens when one call's usage is unavailable", async () => {
+  const unknown = { inputTokens: null, outputTokens: null, source: "unavailable" as const };
+  const base = fakeProvider();
+  const noResearchUsage: ModelProvider = { ...base,
+    async research(req) { return { ...(await base.research(req)), usage: unknown }; } };
+  const noAnswerUsage: ModelProvider = { ...base,
+    async generateStructured(req) { return { ...(await base.generateStructured(req)), usage: unknown }; } };
+
+  const a = await runHomeAgent("market_scout", input, { provider: noResearchUsage });
+  assert.deepEqual(a.usage, { inputTokens: 100, outputTokens: 45, source: "estimated" });
+  const b = await runHomeAgent("market_scout", input, { provider: noAnswerUsage });
+  assert.deepEqual(b.usage, { inputTokens: 9, outputTokens: 10, source: "estimated" });
+});
+
+test("usage labels: complete is provider, partial is estimated, none is unavailable", () => {
+  const p = { inputTokens: 3, outputTokens: 4, source: "provider" as const };
+  const u = { inputTokens: null, outputTokens: null, source: "unavailable" as const };
+  assert.deepEqual(combineUsage(p, p), { inputTokens: 6, outputTokens: 8, source: "provider" });
+  assert.deepEqual(combineUsage(u, u), { inputTokens: null, outputTokens: null, source: "unavailable" });
+  assert.deepEqual(combineUsage(), { inputTokens: null, outputTokens: null, source: "unavailable" });
+  // A half-reported call keeps its known field and never becomes "provider".
+  assert.deepEqual(combineUsage(p, { inputTokens: 5, outputTokens: null, source: "estimated" }),
+    { inputTokens: 8, outputTokens: 4, source: "estimated" });
 });
 
 test("market claims cannot keep an invented URL or stay sourced without evidence", () => {
